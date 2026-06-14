@@ -222,6 +222,93 @@ La visualización, gestión de alarmas y control remoto deberán implementarse
 exclusivamente sobre ThingsBoard. No se permite el uso de plataformas alternativas
 como AWS IoT, Azure IoT Hub o Node-RED como sustitutos.
 
+## Casos de Uso
+
+### CU01 — Monitorear calidad del agua en tiempo real
+**Identificador:** CU01 - Monitorear calidad del agua en tiempo real  
+**Actores:** Operador de ASADA  
+**Propósito:** Permitir al operador visualizar en tiempo real los valores de pH, turbidez y
+conductividad del agua captada, para detectar anomalías en la calidad del agua sin
+necesidad de desplazarse al punto de captación.  
+**Precondiciones:** El nodo ESP32 está encendido y conectado a la red Wi-Fi, el broker
+MQTT está activo, el dashboard de ThingsBoard está configurado y el operador tiene
+acceso a la plataforma.  
+**Postcondiciones:** El operador visualiza los valores actuales e históricos de las variables
+monitoreadas en el dashboard de ThingsBoard.  
+**Flujo principal:** El operador accede al dashboard de ThingsBoard desde un navegador
+web. El sistema muestra los valores más recientes de pH, turbidez y conductividad
+publicados por el ESP32 vía MQTT. El operador analiza las gráficas históricas para
+identificar tendencias o cambios bruscos en la calidad del agua.
+
+---
+
+### CU02 — Recibir alerta de contaminación
+**Identificador:** CU02 - Recibir alerta de contaminación  
+**Actores:** Operador de ASADA  
+**Propósito:** Notificar al operador cuando alguna variable físico-química supera los
+umbrales críticos definidos, para que pueda tomar acciones correctivas de forma
+inmediata.  
+**Precondiciones:** CU01 está activo, el motor de reglas de ThingsBoard tiene configurada
+al menos una regla de negocio con umbrales críticos definidos.  
+**Postcondiciones:** El operador recibe una alerta visual en el dashboard de ThingsBoard
+indicando la variable que superó el umbral y su valor actual.  
+**Flujo principal:** El ESP32 publica un valor que supera el umbral crítico configurado. El
+motor de reglas de ThingsBoard detecta la condición y genera un estado de alerta. El
+dashboard despliega una notificación visual al operador indicando la variable afectada,
+su valor actual y el umbral superado.
+
+---
+
+### CU03 — Controlar actuador remotamente
+**Identificador:** CU03 - Controlar actuador remotamente  
+**Actores:** Operador de ASADA  
+**Propósito:** Permitir al operador activar o desactivar el actuador físico (válvula o bomba)
+desde ThingsBoard mediante un comando RPC, para aislar una fuente contaminada sin
+necesidad de desplazarse al sitio.  
+**Precondiciones:** CU01 está activo, el ESP32 está conectado al broker MQTT y el
+widget de control RPC está configurado en el dashboard.  
+**Postcondiciones:** El actuador cambia su estado físico (activo/inactivo) y ThingsBoard
+refleja el nuevo estado como atributo del dispositivo en menos de 1 segundo.  
+**Flujo principal:** El operador identifica una anomalía en la calidad del agua. El operador
+accede al widget de control en el dashboard de ThingsBoard y emite un comando RPC.
+ThingsBoard transmite el comando al ESP32 vía MQTT. La Tarea B del firmware ejecuta
+el comando y cambia el estado del actuador. El ESP32 reporta el nuevo estado de vuelta
+a ThingsBoard como confirmación.
+
+---
+
+### CU04 — Modificar umbral de alarma
+**Identificador:** CU04 - Modificar umbral de alarma  
+**Actores:** Administrador técnico  
+**Propósito:** Permitir al administrador técnico modificar remotamente las constantes de
+umbral crítico de cada variable físico-química, para adaptar el sistema a condiciones
+estacionales sin necesidad de reprogramar el firmware.  
+**Precondiciones:** El administrador técnico tiene acceso al dashboard de ThingsBoard
+con permisos de configuración, el ESP32 está conectado al broker MQTT.  
+**Postcondiciones:** El nuevo valor de umbral queda almacenado en el ESP32 y el motor
+de reglas de ThingsBoard utiliza el valor actualizado para las alertas subsiguientes.  
+**Flujo principal:** El administrador técnico accede al widget de configuración en el
+dashboard de ThingsBoard. Ingresa el nuevo valor de umbral para la variable deseada y
+emite el comando RPC correspondiente. El ESP32 recibe el comando, actualiza la
+constante de umbral en memoria y confirma el cambio a ThingsBoard.
+
+---
+
+### CU05 — Consultar historial de telemetría
+**Identificador:** CU05 - Consultar historial de telemetría  
+**Actores:** Operador de ASADA, Administrador técnico  
+**Propósito:** Permitir consultar el registro histórico de las variables monitoreadas para
+identificar patrones de contaminación, correlacionar eventos con actividad agrícola o
+climática y generar evidencia técnica ante autoridades como el AyA o el MINAE.  
+**Precondiciones:** El sistema ha estado operando y ThingsBoard ha almacenado datos
+históricos de telemetría.  
+**Postcondiciones:** El usuario visualiza las series temporales de las variables
+seleccionadas en el rango de fechas consultado.  
+**Flujo principal:** El usuario accede al dashboard de ThingsBoard y selecciona el rango
+de fechas a consultar. El sistema despliega las series temporales de pH, turbidez y
+conductividad para el periodo seleccionado. El usuario analiza los datos para identificar
+patrones o generar reportes.
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
