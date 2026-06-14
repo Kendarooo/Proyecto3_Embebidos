@@ -321,7 +321,7 @@ El sistema opera de forma autónoma las 24 horas con intervención humana única
 
 **Flujo de alarma:** Cuando una variable supera el umbral crítico, el motor de reglas de ThingsBoard genera una alerta visual. El operador emite un comando RPC para activar el actuador físico (válvula o bomba), que responde en menos de 1 segundo y confirma su nuevo estado al dashboard.
 
-![ConOps](img/casos_uso.png)
+![ConOps](img/Casos_uso.png)
 
 ## Referencias
 
