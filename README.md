@@ -323,6 +323,34 @@ El sistema opera de forma autónoma las 24 horas con intervención humana única
 
 ![ConOps](img/Casos_uso.png)
 
+## Diagrama de Definición de Bloques (BDD)
+
+El BDD describe la descomposición física del sistema en sus bloques constitutivos y las
+relaciones entre ellos. El bloque raíz es el **Sistema de Monitoreo de Calidad del Agua**,
+que contiene los siguientes sub-bloques:
+
+- **ESP32 SoC:** Núcleo del sistema Edge. Ejecuta FreeRTOS con cinco tareas concurrentes,
+gestiona la adquisición de datos mediante el ADC1, controla el actuador por GPIO y mantiene
+la conectividad Wi-Fi con ThingsBoard.
+
+- **Sensor de pH, Sensor de Turbidez y Sensor de Conductividad:** Tres sensores analógicos
+conectados al ADC1 del ESP32 (GPIO 32–39). Entregan señales de 0 a 3.3V proporcionales a
+las variables físico-químicas del agua. Quedan excluidos del ADC2 por incompatibilidad con
+el módulo Wi-Fi activo.
+
+- **Módulo Relé:** Interfaz de potencia entre el ESP32 y la válvula solenoide. Recibe una
+señal digital desde un GPIO del ESP32 y conmuta la carga eléctrica de la válvula.
+
+- **Válvula Solenoide:** Actuador físico del sistema. Controlada por el relé, permite aislar
+la fuente de agua ante una detección de contaminación. Reporta su estado de vuelta al ESP32
+como retroalimentación.
+
+- **ThingsBoard Cloud:** Capa de nube del sistema. Recibe telemetría por MQTT, la visualiza
+en un dashboard en tiempo real, ejecuta reglas de negocio para generar alarmas automáticas
+y envía comandos RPC de vuelta al ESP32 para control remoto del actuador.
+
+![BDD](img/dig3.png)
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
