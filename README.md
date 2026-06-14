@@ -309,6 +309,8 @@ de fechas a consultar. El sistema despliega las series temporales de pH, turbide
 conductividad para el periodo seleccionado. El usuario analiza los datos para identificar
 patrones o generar reportes.
 
+![Diagrama de casos de uso](img/diagrama_casos_uso_aquawatch.png)
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
