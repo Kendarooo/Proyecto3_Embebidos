@@ -309,7 +309,7 @@ de fechas a consultar. El sistema despliega las series temporales de pH, turbide
 conductividad para el periodo seleccionado. El usuario analiza los datos para identificar
 patrones o generar reportes.
 
-![Diagrama de casos de uso](img/diagrama_casos_uso_aquawatch.png)
+![Diagrama de casos de uso](img/diagrama_casos_uso.png)
 
 ## Referencias
 
