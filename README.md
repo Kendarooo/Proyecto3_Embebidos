@@ -417,6 +417,39 @@ la Tarea B y otras tareas que consulten el estado de la válvula.
 
 ![Arquitectura FreeRTOS](img/freertos.png)
 
+## Prototipo Conceptual — Dashboard ThingsBoard
+
+El dashboard de ThingsBoard centraliza la visualización, el control remoto y la gestión
+de alarmas del sistema. Se organiza en tres secciones principales:
+
+**Sección 1 — Telemetría en tiempo real:**
+Muestra los valores actuales e históricos de las tres variables monitoreadas mediante
+gráficas de línea y tarjetas de valor numérico. Un indicador de semáforo (verde/amarillo/rojo)
+refleja el estado general de la calidad del agua según los umbrales configurados.
+
+- Gráfica de línea: pH (umbral crítico: < 6.5 o > 8.5)
+- Gráfica de línea: Turbidez en NTU (umbral crítico: > 4 NTU)
+- Gráfica de línea: Conductividad en µS/cm
+- Tarjetas de valor numérico: valores actuales de las tres variables
+- Semáforo de estado: verde (normal), amarillo (precaución), rojo (alerta)
+
+**Sección 2 — Control remoto (RPC):**
+Permite al operador interactuar directamente con el ESP32 desde el navegador sin
+desplazarse al punto de captación.
+
+- Botón de activación/desactivación de válvula solenoide
+- Indicador de estado del actuador (abierto/cerrado)
+- Slider de modificación de umbral de pH en tiempo real
+
+**Sección 3 — Alarmas e historial:**
+Registra todos los eventos críticos y permite al operador consultar el historial
+de anomalías para generar reportes ante el AyA o el MINAE.
+
+- Panel de alarmas activas con variable afectada y valor registrado
+- Historial de eventos con marca de tiempo
+
+![Dashboard ThingsBoard](img/dashboard.png)
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
