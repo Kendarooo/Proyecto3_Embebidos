@@ -26,6 +26,202 @@ Este prototipo opera como capa de alerta temprana de bajo costo. No sustituye an
 
 ---
 
+
+## Requisitos del Sistema
+
+---
+
+### FR — Requisitos Funcionales
+
+#### Módulo de Sensado
+
+**[FR-01] Muestreo periódico de variables físico-químicas**
+El sistema deberá leer de forma periódica y determinista los valores de pH, turbidez y
+conductividad del agua mediante los sensores conectados a los pines ADC del ESP32.
+*Justificación: El monitoreo continuo es la base del sistema de alerta temprana. Sin
+muestreo periódico no es posible detectar cambios bruscos en la calidad del agua.*
+
+**[FR-02] Procesamiento local de señal**
+El sistema deberá convertir las lecturas analógicas crudas del ADC a unidades físicas
+calibradas (pH en escala 0-14, turbidez en NTU, conductividad en µS/cm) antes de
+enviarlas a la cola de comunicaciones.
+*Justificación: Los valores crudos del ADC no tienen significado físico directo. La
+conversión local en el Edge evita enviar datos sin interpretar a la nube.*
+
+---
+
+#### Módulo de Procesamiento Local (FreeRTOS)
+
+**[FR-03] Arquitectura multitarea estricta**
+El sistema deberá implementar un mínimo de 5 tareas de usuario en FreeRTOS con
+prioridades diferenciadas, incluyendo obligatoriamente:
+- **Tarea A (Alta prioridad):** Muestreo periódico de sensores y procesamiento local. Su periodo de ejecución debe cumplirse de manera determinista.
+- **Tarea B (Prioridad media):** Ejecución de algoritmos de control local y control de actuadores por comandos directos o remotos (RPC).
+- **Tarea C (Baja prioridad):** Gestión de la pila TCP/IP, reconexión de Wi-Fi y publicación de datos por MQTT hacia ThingsBoard. Esta tarea no debe bloquear el procesador ni degradar el determinismo de la Tarea A.
+
+*Justificación: La asignación de prioridades diferenciadas garantiza que las operaciones
+de red de baja criticidad no interrumpan el sensado, que es la función crítica del sistema.*
+
+**[FR-04] Comunicación entre tareas mediante colas**
+El sistema deberá transferir los datos de telemetría procesados desde la Tarea A hacia
+la Tarea C exclusivamente mediante colas (Queues) de FreeRTOS.
+*Justificación: Las colas garantizan transferencia de datos segura y sin condiciones
+de carrera entre tareas de diferente prioridad.*
+
+**[FR-05] Protección de recursos compartidos**
+El sistema deberá proteger el acceso al bus de sensores y a otros periféricos
+compartidos mediante semáforos o mutexes de FreeRTOS, evitando condiciones de
+carrera e inversión de prioridades.
+*Justificación: Sin protección de recursos compartidos el sistema puede producir
+lecturas corruptas o comportamiento no determinista.*
+
+---
+
+#### Módulo de Comunicaciones
+
+**[FR-06] Publicación de telemetría por MQTT**
+El sistema deberá publicar periódicamente un payload JSON estructurado con los
+valores de pH, turbidez y conductividad hacia el broker MQTT de ThingsBoard.
+*Justificación: MQTT es el protocolo estándar de IoT industrial de baja latencia y
+bajo consumo energético, requerido explícitamente por el instructivo del proyecto.*
+
+**[FR-07] Reconexión automática ante caída de red**
+El sistema deberá detectar la pérdida de conectividad Wi-Fi o MQTT y reconectarse
+de forma asíncrona sin bloquear las tareas de sensado y control. No se permite el
+uso de bucles de espera indefinidos (`while(!connected)`) dentro de las tareas principales.
+*Justificación: La disponibilidad del monitoreo local no puede depender de la
+estabilidad de la red. Las tareas críticas deben continuar operando durante
+desconexiones.*
+
+---
+
+#### Módulo de Nube (ThingsBoard)
+
+**[FR-08] Visualización de telemetría en tiempo real**
+La plataforma ThingsBoard deberá mostrar en un dashboard los valores actuales e
+históricos de pH, turbidez y conductividad mediante widgets gráficos actualizados
+en tiempo real.
+*Justificación: La visualización continua permite al operador de la ASADA identificar
+tendencias y anomalías sin necesidad de desplazarse al punto de captación.*
+
+**[FR-09] Generación de alarmas automáticas**
+El motor de reglas de ThingsBoard deberá generar una alerta visual cuando cualquier
+variable supere los umbrales críticos definidos (pH < 6.5 o pH > 8.5, turbidez > 4
+NTU según normativa AyA).
+*Justificación: La alerta automática elimina la dependencia de monitoreo humano
+continuo, que es precisamente la debilidad del sistema actual en Cartago.*
+
+**[FR-10] Control remoto mediante RPC**
+El dashboard de ThingsBoard deberá permitir al operador enviar comandos RPC hacia
+la ESP32 para: (a) activar o desactivar el actuador físico, y (b) modificar en tiempo
+real las constantes de umbral de alarma, con respuesta confirmada en menos de
+1 segundo.
+*Justificación: La modificación remota de umbrales permite adaptar el sistema a
+condiciones estacionales sin reprogramar el firmware. El control del actuador permite
+aislar una fuente contaminada sin desplazamiento físico al sitio.*
+
+---
+
+#### Módulo de Actuación
+
+**[FR-11] Control de actuador con retroalimentación de estado**
+El sistema deberá controlar un actuador físico (válvula o bomba) y reportar su estado
+actual (activo/inactivo) de vuelta a ThingsBoard como atributo del dispositivo.
+*Justificación: La retroalimentación de estado confirma al operador que el comando
+RPC fue ejecutado correctamente en el hardware.*
+
+---
+
+### NFR — Requisitos No Funcionales
+
+#### Módulo de Procesamiento Local (FreeRTOS)
+
+**[NFR-01] Determinismo temporal de la tarea de sensado**
+El periodo de ejecución de la Tarea A no deberá desviarse más de ±5 ms de su
+periodo nominal, incluso bajo carga máxima de la pila TCP/IP.
+*Justificación: El determinismo es la propiedad fundamental de un RTOS. Sin él el
+sistema no puede garantizar que detectará un evento de contaminación dentro de una
+ventana de tiempo predecible.*
+
+**[NFR-02] Operación autónoma ante desconexión de red**
+El sistema deberá continuar ejecutando las tareas de sensado y control de forma
+ininterrumpida durante al menos 30 segundos de desconexión total de red, sin
+requerir intervención manual ni reset físico del microcontrolador.
+*Justificación: El instructivo exige explícitamente esta prueba de resiliencia durante
+la demostración E2, donde el profesor desconectará el enrutador durante 30 segundos.*
+
+---
+
+#### Módulo de Comunicaciones
+
+**[NFR-03] Latencia de publicación MQTT**
+El tiempo entre la adquisición de una muestra y su disponibilidad en el dashboard de
+ThingsBoard no deberá superar los 2 segundos bajo condiciones normales de red.
+*Justificación: Una latencia mayor reduciría la utilidad del sistema como herramienta
+de alerta temprana ante eventos de contaminación aguda.*
+
+---
+
+#### Módulo de Nube (ThingsBoard)
+
+**[NFR-04] Tiempo de respuesta RPC**
+El actuador físico deberá responder a un comando RPC emitido desde ThingsBoard
+en menos de 1 segundo desde que el operador ejecuta la acción en el dashboard.
+*Justificación: Una respuesta lenta en una situación de emergencia hídrica puede
+significar que agua contaminada continúe distribuyéndose durante el tiempo de
+latencia.*
+
+---
+
+### CON — Restricciones
+
+#### Módulo de Procesamiento Local (FreeRTOS)
+
+**[CON-01] Plataforma de hardware**
+El sistema deberá ejecutarse exclusivamente sobre el SoC ESP32 con procesador de
+doble núcleo Tensilica Xtensa LX6, sin posibilidad de migrar a otra plataforma
+durante el desarrollo del proyecto.
+
+**[CON-02] Sistema operativo**
+El firmware deberá desarrollarse obligatoriamente sobre FreeRTOS. No se permite
+el uso de un bucle secuencial clásico `void loop()` con `delay()` bloqueantes como
+arquitectura principal.
+
+---
+
+#### Módulo de Sensado
+
+**[CON-03] Pines ADC permitidos**
+Los sensores analógicos deberán conectarse exclusivamente a pines del ADC1 del
+ESP32 (GPIO 32–39). El ADC2 queda prohibido debido a su incompatibilidad con el
+módulo Wi-Fi activo.
+
+**[CON-04] Emulación analógica de sensores**
+En caso de que algún sensor físico sea de difícil acceso, se permite su emulación
+mediante generadores de señal analógica por hardware (potenciómetro o DAC).
+No se acepta la emulación por software puro como sustituto de una señal física
+en el pin ADC.
+*Justificación: El instructivo permite expresamente esta modalidad condicionada a
+justificación por dificultad de acceso al sensor.*
+
+---
+
+#### Módulo de Comunicaciones
+
+**[CON-05] Protocolo de comunicación**
+El protocolo de enlace entre el ESP32 y ThingsBoard deberá ser MQTT con payload
+en formato JSON. El uso de HTTP solo es admisible con justificación energética
+documentada.
+
+---
+
+#### Módulo de Nube (ThingsBoard)
+
+**[CON-06] Plataforma de nube**
+La visualización, gestión de alarmas y control remoto deberán implementarse
+exclusivamente sobre ThingsBoard. No se permite el uso de plataformas alternativas
+como AWS IoT, Azure IoT Hub o Node-RED como sustitutos.
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
