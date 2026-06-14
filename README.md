@@ -311,6 +311,18 @@ patrones o generar reportes.
 
 ![Diagrama de casos de uso](img/diagrama_casos_uso.png)
 
+## Concepto de Operaciones (ConOps)
+
+El sistema opera de forma autónoma las 24 horas con intervención humana únicamente cuando se detecta una anomalía o se requiere una acción de control remoto. Se definen tres escenarios de operación:
+
+**Flujo normal:** La Tarea A muestrea periódicamente pH, turbidez y conductividad. Los datos pasan por una cola FreeRTOS a la Tarea C, que los publica por MQTT hacia ThingsBoard. El operador de ASADA visualiza la telemetría en tiempo real desde el dashboard sin desplazarse al punto de captación.
+
+**Fallo de red:** Ante una desconexión, las Tareas A y B continúan operando de forma ininterrumpida. La Tarea C ejecuta reconexión asíncrona automática sin intervención manual ni reset físico del microcontrolador.
+
+**Flujo de alarma:** Cuando una variable supera el umbral crítico, el motor de reglas de ThingsBoard genera una alerta visual. El operador emite un comando RPC para activar el actuador físico (válvula o bomba), que responde en menos de 1 segundo y confirma su nuevo estado al dashboard.
+
+![ConOps](img/casos_uso.png)
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
