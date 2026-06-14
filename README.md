@@ -351,6 +351,29 @@ y envía comandos RPC de vuelta al ESP32 para control remoto del actuador.
 
 ![BDD](img/dig3.png)
 
+## Diagrama de Bloques Internos (IBD)
+
+El IBD describe los flujos de información y energía entre los bloques internos del sistema,
+organizados en cuatro módulos funcionales:
+
+**M1 — Sensado:** Tres sensores analógicos (pH, turbidez y conductividad) entregan señales
+de voltaje entre 0 y 3.3V hacia la Tarea A del ESP32 a través del ADC1.
+
+**M2 — Procesamiento FreeRTOS:** La Tarea A realiza el muestreo periódico y deposita los
+datos estructurados en la Cola FreeRTOS. La Cola transfiere la telemetría procesada hacia
+la Tarea C de comunicaciones. La Tarea B recibe señales de control de la Tarea A y gobierna
+el actuador físico.
+
+**M3 — Actuación:** El Módulo Relé recibe una señal digital GPIO de 3.3V desde la Tarea B
+y conmuta la corriente de 12VDC hacia la Válvula Solenoide. La válvula reporta su estado
+de vuelta a la Tarea B como señal de feedback.
+
+**M4 — Cloud ThingsBoard:** La Tarea C publica la telemetría por MQTT/JSON hacia el
+Dashboard. Cuando una variable supera el umbral crítico, el Motor de Reglas genera una
+alarma y activa el módulo de Control RPC, que envía el comando de vuelta al ESP32.
+
+![IBD](img/idd.png)
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
