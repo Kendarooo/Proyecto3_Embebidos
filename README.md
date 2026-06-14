@@ -374,6 +374,49 @@ alarma y activa el módulo de Control RPC, que envía el comando de vuelta al ES
 
 ![IBD](img/idd.png)
 
+## Arquitectura FreeRTOS
+
+El firmware del ESP32 implementa una arquitectura multitarea estricta sobre FreeRTOS con
+cinco tareas de usuario, dos colas de comunicación y dos mutexes de protección de recursos.
+
+**Tareas:**
+
+- **Tarea A (Prioridad 5 — Alta):** Ejecuta el muestreo periódico de los tres sensores
+analógicos cada 500ms mediante el ADC1. Es la tarea de mayor prioridad del sistema,
+garantizando determinismo temporal en la adquisición de datos. Protege el acceso al bus
+ADC1 mediante Mutex 1.
+
+- **Tarea B (Prioridad 4 — Media-alta):** Controla el actuador físico (relé + válvula)
+mediante señales GPIO digitales. Procesa los comandos RPC recibidos desde ThingsBoard a
+través de la Cola 2. Protege el estado del actuador mediante Mutex 2.
+
+- **Tarea C (Prioridad 2 — Baja):** Gestiona la conectividad Wi-Fi y el enlace MQTT con
+ThingsBoard. Consume la telemetría procesada desde la Cola 1 y la publica como payload
+JSON. Recibe comandos RPC entrantes y los deposita en la Cola 2 hacia la Tarea B. Ejecuta
+la reconexión asíncrona ante caídas de red sin bloquear las tareas de mayor prioridad.
+
+- **Tarea D (Prioridad 3 — Media):** Actúa como watchdog del sistema, supervisando el
+estado de las tareas críticas A, B y C cada 2000ms para detectar bloqueos o fallos.
+
+- **Tarea E (Prioridad 1 — Mínima):** Registra el estado del sistema en log local y
+actualiza el indicador LED de estado cada 5000ms.
+
+**Mecanismos de sincronización:**
+
+- **Cola 1:** Canal de comunicación unidireccional desde la Tarea A hacia la Tarea C.
+Transporta la telemetría procesada (pH, turbidez, conductividad) como estructuras de datos.
+
+- **Cola 2:** Canal de comunicación unidireccional desde la Tarea C hacia la Tarea B.
+Transporta los comandos RPC recibidos desde ThingsBoard para control del actuador.
+
+- **Mutex 1:** Protege el acceso exclusivo al bus ADC1, evitando condiciones de carrera
+durante la lectura de sensores.
+
+- **Mutex 2:** Protege el estado del actuador, evitando inversión de prioridades entre
+la Tarea B y otras tareas que consulten el estado de la válvula.
+
+![Arquitectura FreeRTOS](img/freertos.png)
+
 ## Referencias
 
 [1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
