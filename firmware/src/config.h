@@ -5,8 +5,14 @@
 #define PIN_PH          34
 #define PIN_TURBIDEZ    35
 #define PIN_CONDUCTIV   32
-#define PIN_RELE        26
-#define PIN_LED          2   // LED integrado del ESP32
+
+// ── Actuadores ────────────────────────────────────────────────────
+#define PIN_LED_VERDE   26   // Válvula abierta (sistema normal)
+#define PIN_LED_ROJO    27   // Válvula cerrada (alarma crítica)
+#define PIN_BUZZER      25   // Señal sonora en transición
+
+// ── LED de estado de conectividad (TareaE) ────────────────────────
+#define PIN_LED_STATUS   2   // LED integrado del ESP32
 
 // ── Credenciales WiFi ─────────────────────────────────────────────
 #define WIFI_SSID       "estudiantes.ie"
@@ -33,9 +39,11 @@
 
 // ── Estructura de telemetría (viaja por Cola 1) ───────────────────
 struct TelemetriaData {
-    float ph;
-    float turbidez;
-    float conductividad;
+    float    ph;
+    float    turbidez;
+    float    conductividad;
+    bool     actuador;    // Estado de la válvula: false=abierta, true=cerrada
+    uint32_t uptime_ms;  // Tiempo desde boot en milisegundos
 };
 
 // ── Estructura de comando RPC (viaja por Cola 2) ──────────────────

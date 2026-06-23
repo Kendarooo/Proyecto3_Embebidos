@@ -27,13 +27,7 @@ void setup() {
         esp_restart();
     }
 
-    // ── Core 0: Comunicaciones (WiFi stack ya corre en Core 0) ───
-    xTaskCreatePinnedToCore(
-        tareaC_Comunicaciones, "TareaC",
-        8192, NULL, 2, NULL, 0
-    );
-
-    // ── Core 1: Tiempo real ───────────────────────────────────────
+    // ── Core 1: Tiempo real (sensado y control determinista) ─────
     xTaskCreatePinnedToCore(
         tareaA_Sensado,  "TareaA",
         4096, NULL, 5, NULL, 1
@@ -46,14 +40,20 @@ void setup() {
         tareaD_Watchdog, "TareaD",
         2048, NULL, 3, NULL, 1
     );
+
+    // ── Core 0: Conectividad y servicios (WiFi stack en Core 0) ─
+    xTaskCreatePinnedToCore(
+        tareaC_Comunicaciones, "TareaC",
+        8192, NULL, 2, NULL, 0
+    );
     xTaskCreatePinnedToCore(
         tareaE_Log,      "TareaE",
-        2048, NULL, 1, NULL, 1
+        1024, NULL, 1, NULL, 0
     );
 
     Serial.println("[OK] Todas las tareas iniciadas");
-    Serial.printf("  Core 0 → TareaC (WiFi/MQTT)\n");
-    Serial.printf("  Core 1 → TareaA(P5) TareaB(P4) TareaD(P3) TareaE(P1)\n");
+    Serial.printf("  Core 1 → TareaA(P5) TareaB(P4) TareaD(P3)\n");
+    Serial.printf("  Core 0 → TareaC(P2) TareaE(P1)\n");
 }
 
 void loop() {

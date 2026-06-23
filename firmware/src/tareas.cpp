@@ -73,6 +73,14 @@ void tareaA_Sensado(void* param) {
             xSemaphoreGive(mutex1);
         }
 
+        if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(5)) == pdTRUE) {
+            dato.actuador = estadoActuador;
+            xSemaphoreGive(mutex2);
+        } else {
+            dato.actuador = false;
+        }
+        dato.uptime_ms = (uint32_t)millis();
+
         // Descartar dato más antiguo si la cola está llena
         if (uxQueueSpacesAvailable(cola1) == 0) {
             TelemetriaData descarte;
@@ -89,34 +97,63 @@ void tareaA_Sensado(void* param) {
 // TAREA B — Control actuador  |  Core 1  |  Prioridad 4
 // ─────────────────────────────────────────────────────────────────
 void tareaB_Actuador(void* param) {
-    pinMode(PIN_RELE, OUTPUT);
-    digitalWrite(PIN_RELE, LOW);
+    pinMode(PIN_LED_VERDE, OUTPUT);
+    pinMode(PIN_LED_ROJO,  OUTPUT);
+    pinMode(PIN_BUZZER,    OUTPUT);
+    // Estado inicial: válvula abierta
+    digitalWrite(PIN_LED_VERDE, HIGH);
+    digitalWrite(PIN_LED_ROJO,  LOW);
+    digitalWrite(PIN_BUZZER,    LOW);
 
     ComandoRPC cmd;
 
     while (true) {
         if (xQueueReceive(cola2, &cmd, pdMS_TO_TICKS(100)) == pdTRUE) {
-            if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(50)) == pdTRUE) {
 
-                if (strcmp(cmd.metodo, "setActuador") == 0) {
-                    estadoActuador = (cmd.valor > 0.5f);
-                    digitalWrite(PIN_RELE, estadoActuador ? HIGH : LOW);
-                    Serial.printf("[TareaB] Actuador: %s\n", estadoActuador ? "ON" : "OFF");
-
-                } else if (strcmp(cmd.metodo, "setUmbralPhMin") == 0) {
-                    umbralPhMin = cmd.valor;
-                    Serial.printf("[TareaB] Umbral pH min: %.2f\n", umbralPhMin);
-
-                } else if (strcmp(cmd.metodo, "setUmbralPhMax") == 0) {
-                    umbralPhMax = cmd.valor;
-                    Serial.printf("[TareaB] Umbral pH max: %.2f\n", umbralPhMax);
-
-                } else if (strcmp(cmd.metodo, "setUmbralTurbidez") == 0) {
-                    umbralTurbidez = cmd.valor;
-                    Serial.printf("[TareaB] Umbral turbidez: %.2f NTU\n", umbralTurbidez);
+            if (strcmp(cmd.metodo, "activarValvula") == 0) {
+                if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    estadoActuador = true;
+                    xSemaphoreGive(mutex2);
                 }
+                digitalWrite(PIN_LED_VERDE, LOW);
+                digitalWrite(PIN_LED_ROJO,  HIGH);
+                digitalWrite(PIN_BUZZER, HIGH);
+                vTaskDelay(pdMS_TO_TICKS(200));
+                digitalWrite(PIN_BUZZER, LOW);
+                Serial.println("[TareaB] Válvula CERRADA — alarma");
 
-                xSemaphoreGive(mutex2);
+            } else if (strcmp(cmd.metodo, "desactivarValvula") == 0) {
+                if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    estadoActuador = false;
+                    xSemaphoreGive(mutex2);
+                }
+                digitalWrite(PIN_LED_ROJO,  LOW);
+                digitalWrite(PIN_LED_VERDE, HIGH);
+                digitalWrite(PIN_BUZZER, HIGH);
+                vTaskDelay(pdMS_TO_TICKS(200));
+                digitalWrite(PIN_BUZZER, LOW);
+                Serial.println("[TareaB] Válvula ABIERTA — normal");
+
+            } else if (strcmp(cmd.metodo, "setUmbralPhMin") == 0) {
+                if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    umbralPhMin = cmd.valor;
+                    xSemaphoreGive(mutex2);
+                }
+                Serial.printf("[TareaB] Umbral pH min: %.2f\n", cmd.valor);
+
+            } else if (strcmp(cmd.metodo, "setUmbralPhMax") == 0) {
+                if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    umbralPhMax = cmd.valor;
+                    xSemaphoreGive(mutex2);
+                }
+                Serial.printf("[TareaB] Umbral pH max: %.2f\n", cmd.valor);
+
+            } else if (strcmp(cmd.metodo, "setUmbralTurbidez") == 0) {
+                if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(50)) == pdTRUE) {
+                    umbralTurbidez = cmd.valor;
+                    xSemaphoreGive(mutex2);
+                }
+                Serial.printf("[TareaB] Umbral turbidez: %.2f NTU\n", cmd.valor);
             }
         }
     }
@@ -229,7 +266,7 @@ void tareaD_Watchdog(void* param) {
 // TAREA E — Log + LED  |  Core 1  |  Prioridad 1
 // ─────────────────────────────────────────────────────────────────
 void tareaE_Log(void* param) {
-    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_LED_STATUS, OUTPUT);
 
     while (true) {
         bool wifiOk = (WiFi.status() == WL_CONNECTED);
@@ -237,21 +274,21 @@ void tareaE_Log(void* param) {
 
         if (wifiOk && mqttOk) {
             // Parpadeo rápido (100ms) = sistema OK
-            digitalWrite(PIN_LED, HIGH);
+            digitalWrite(PIN_LED_STATUS, HIGH);
             vTaskDelay(pdMS_TO_TICKS(100));
-            digitalWrite(PIN_LED, LOW);
+            digitalWrite(PIN_LED_STATUS, LOW);
             vTaskDelay(pdMS_TO_TICKS(100));
         } else if (wifiOk) {
             // Parpadeo medio (300ms) = WiFi OK pero sin MQTT
-            digitalWrite(PIN_LED, HIGH);
+            digitalWrite(PIN_LED_STATUS, HIGH);
             vTaskDelay(pdMS_TO_TICKS(300));
-            digitalWrite(PIN_LED, LOW);
+            digitalWrite(PIN_LED_STATUS, LOW);
             vTaskDelay(pdMS_TO_TICKS(300));
         } else {
             // Parpadeo lento (800ms) = sin conexión
-            digitalWrite(PIN_LED, HIGH);
+            digitalWrite(PIN_LED_STATUS, HIGH);
             vTaskDelay(pdMS_TO_TICKS(800));
-            digitalWrite(PIN_LED, LOW);
+            digitalWrite(PIN_LED_STATUS, LOW);
             vTaskDelay(pdMS_TO_TICKS(800));
         }
     }

@@ -10,7 +10,7 @@ extern QueueHandle_t cola2;   // TareaC → TareaB  (comandos RPC)
 
 // ── Mutexes (definidos en main.cpp) ──────────────────────────────
 extern SemaphoreHandle_t mutex1;   // protege bus ADC1
-extern SemaphoreHandle_t mutex2;   // protege estado del actuador
+extern SemaphoreHandle_t mutex2;   // protege estadoActuador y umbrales (umbralPhMin, umbralPhMax, umbralTurbidez)
 
 // ── Estado compartido (protegido por mutex2) ──────────────────────
 extern volatile bool  estadoActuador;
@@ -23,4 +23,4 @@ void tareaA_Sensado        (void* param);   // Core 1 — prioridad 5
 void tareaB_Actuador       (void* param);   // Core 1 — prioridad 4
 void tareaC_Comunicaciones (void* param);   // Core 0 — prioridad 2
 void tareaD_Watchdog       (void* param);   // Core 1 — prioridad 3
-void tareaE_Log            (void* param);   // Core 1 — prioridad 1
+void tareaE_Log            (void* param);   // Core 0 — prioridad 1
