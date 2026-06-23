@@ -133,9 +133,10 @@ void tareaC_Comunicaciones(void* param) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
 
-    uint32_t ultimoIntentoWifi  = 0;
-    uint32_t ultimoIntentoMQTT  = 0;
-    uint32_t ultimoAtributo     = 0;
+    uint32_t ultimoIntentoWifi   = 0;
+    uint32_t ultimoIntentoMQTT   = 0;
+    bool     lastEstadoPublicado = false;
+    bool     primeraPublicacion  = true;
 
     while (true) {
         uint32_t ahora = millis();
@@ -158,11 +159,21 @@ void tareaC_Comunicaciones(void* param) {
                 Serial.println("[TareaC] Conectando MQTT...");
                 if (mqttClient.connect("AquaWatchCR", TB_TOKEN, NULL)) {
                     mqttClient.subscribe("v1/devices/me/rpc/request/+");
+                    primeraPublicacion = true;  // re-publicar atributo tras reconexión
                     Serial.println("[TareaC] MQTT conectado");
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
+        }
+
+        // ── Leer estado del actuador (compartido entre telemetría y atributo) ─
+        bool estadoAhora;
+        if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(10)) == pdTRUE) {
+            estadoAhora = estadoActuador;
+            xSemaphoreGive(mutex2);
+        } else {
+            estadoAhora = lastEstadoPublicado;
         }
 
         // ── Publicar telemetría desde Cola 1 ─────────────────────
@@ -172,22 +183,20 @@ void tareaC_Comunicaciones(void* param) {
             doc["ph"]            = serialized(String(dato.ph, 2));
             doc["turbidez"]      = serialized(String(dato.turbidez, 2));
             doc["conductividad"] = serialized(String(dato.conductividad, 2));
+            doc["actuador"]      = estadoAhora;          // bool real: true / false
+            doc["uptime_ms"]     = (uint32_t)millis();
 
             char buffer[256];
             serializeJson(doc, buffer);
             mqttClient.publish("v1/devices/me/telemetry", buffer);
         }
 
-        // ── Publicar estado del actuador como atributo (cada 2s) ─
-        if (ahora - ultimoAtributo > 2000) {
-            ultimoAtributo = ahora;
-            bool estado;
-            if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(10)) == pdTRUE) {
-                estado = estadoActuador;
-                xSemaphoreGive(mutex2);
-            }
-            char atributo[64];
-            snprintf(atributo, sizeof(atributo), "{\"actuador\":%s}", estado ? "true" : "false");
+        // ── Publicar estadoValvula en atributos solo cuando cambia ─
+        if (primeraPublicacion || estadoAhora != lastEstadoPublicado) {
+            lastEstadoPublicado = estadoAhora;
+            primeraPublicacion  = false;
+            char atributo[48];
+            snprintf(atributo, sizeof(atributo), "{\"estadoValvula\":%s}", estadoAhora ? "true" : "false");
             mqttClient.publish("v1/devices/me/attributes", atributo);
         }
 

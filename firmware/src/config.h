@@ -9,13 +9,13 @@
 #define PIN_LED          2   // LED integrado del ESP32
 
 // ── Credenciales WiFi ─────────────────────────────────────────────
-#define WIFI_SSID       "TU_RED_WIFI"
-#define WIFI_PASS       "TU_CONTRASENA"
+#define WIFI_SSID       "estudiantes.ie"
+#define WIFI_PASS       "Estudiantes2024"
 
 // ── ThingsBoard ───────────────────────────────────────────────────
 #define TB_SERVER       "thingsboard.cloud"
 #define TB_PORT         1883
-#define TB_TOKEN        "TU_TOKEN_AQUI"
+#define TB_TOKEN        "rnddtwjj7eaqej4p6t7u"  // Token de acceso del dispositivo en ThingsBoard
 
 // ── Periodos de tareas (ms) ───────────────────────────────────────
 #define PERIODO_SENSADO_MS    500
