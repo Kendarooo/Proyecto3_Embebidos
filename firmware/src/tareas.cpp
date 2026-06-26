@@ -13,17 +13,69 @@ volatile float umbralTurbidez = UMBRAL_TURBIDEZ_DEF;
 static WiFiClient  espClient;
 static PubSubClient mqttClient(espClient);
 
-// ── Lee ADC1 promediando 10 muestras (reduce ruido) ──────────────
-static float leerADC(int pin) {
-    uint32_t suma = 0;
-    for (int i = 0; i < 10; i++) suma += analogRead(pin);
-    return suma / 10.0f;
+// ── Salidas del actuador ─────────────────────────────────────────
+static void inicializarPinesActuador() {
+    pinMode(PIN_LED_VERDE, OUTPUT);
+    pinMode(PIN_LED_ROJO,  OUTPUT);
+    pinMode(PIN_BUZZER,    OUTPUT);
+    digitalWrite(PIN_BUZZER, LOW);
 }
 
-// ── Conversiones ADC → unidades físicas ──────────────────────────
-static float adcAPh(float raw)          { return raw * (14.0f / 4095.0f); }
-static float adcATurbidez(float raw)    { return raw * (100.0f / 4095.0f); }
-static float adcAConductividad(float raw){ return raw * (2000.0f / 4095.0f); }
+static void aplicarSalidaActuador(bool actuadorActivo) {
+    digitalWrite(PIN_LED_VERDE, actuadorActivo ? LOW : HIGH);
+    digitalWrite(PIN_LED_ROJO,  actuadorActivo ? HIGH : LOW);
+}
+
+static void beepActuador() {
+    digitalWrite(PIN_BUZZER, HIGH);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    digitalWrite(PIN_BUZZER, LOW);
+}
+
+// ── Selecciona canal del MUX. canal usa formato S1S0 ─────────────
+static void seleccionarMux(uint8_t canal) {
+    digitalWrite(PIN_MUX_S0, (canal & 0b01) ? HIGH : LOW);
+    digitalWrite(PIN_MUX_S1, (canal & 0b10) ? HIGH : LOW);
+    delayMicroseconds(MUX_SETTLE_US);
+}
+
+// ── Lee ADC1 común del MUX promediando muestras físicas ──────────
+static uint16_t leerMuxPromediado(uint8_t canal) {
+    seleccionarMux(canal);
+
+    uint32_t suma = 0;
+    for (int i = 0; i < ADC_MUESTRAS; i++) {
+        suma += analogRead(PIN_MUX_ADC);
+        delayMicroseconds(200);
+    }
+    return (uint16_t)((suma + (ADC_MUESTRAS / 2)) / ADC_MUESTRAS);
+}
+
+// ── Conversiones ADC físico → voltaje → unidades de sensores ─────
+static float clamp_float(float value, float min_value, float max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static float adc_raw_to_voltage(uint16_t raw) {
+    return ((float)raw / ADC_MAX_VALUE) * ADC_VREF;
+}
+
+static float voltage_to_ph(float voltage) {
+    // Maqueta SEN0161-V2: potenciómetro 0.0-3.3 V representa pH 0-14.
+    return clamp_float((voltage / ADC_VREF) * 14.0f, 0.0f, 14.0f);
+}
+
+static float voltage_to_ec(float voltage) {
+    // Maqueta DFR0300: potenciómetro 0.0-3.3 V representa EC 0-20 mS/cm.
+    return clamp_float((voltage / ADC_VREF) * 20.0f, 0.0f, 20.0f);
+}
+
+static float voltage_to_turbidity(float voltage) {
+    // Maqueta SEN0189: salida inversa; 3.3 V agua clara, 0.0 V muy turbia.
+    return clamp_float(((ADC_VREF - voltage) / ADC_VREF) * 10.0f, 0.0f, 10.0f);
+}
 
 // ─────────────────────────────────────────────────────────────────
 // CALLBACK MQTT — corre en contexto de TareaC
@@ -59,25 +111,55 @@ static void callbackMQTT(char* topic, byte* payload, unsigned int length) {
 void tareaA_Sensado(void* param) {
     analogSetWidth(12);
     analogSetAttenuation(ADC_11db);
+    analogReadResolution(12);
+    inicializarPinesActuador();
+    aplicarSalidaActuador(false);
+    pinMode(PIN_MUX_ADC, INPUT);
+    pinMode(PIN_MUX_S0, OUTPUT);
+    pinMode(PIN_MUX_S1, OUTPUT);
+    seleccionarMux(MUX_CH_TURBIDEZ);
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t periodo = pdMS_TO_TICKS(PERIODO_SENSADO_MS);
 
     while (true) {
-        TelemetriaData dato;
+        TelemetriaData dato = {};
 
         if (xSemaphoreTake(mutex1, pdMS_TO_TICKS(10)) == pdTRUE) {
-            dato.ph            = adcAPh(leerADC(PIN_PH));
-            dato.turbidez      = adcATurbidez(leerADC(PIN_TURBIDEZ));
-            dato.conductividad = adcAConductividad(leerADC(PIN_CONDUCTIV));
+            // Cada canal del MUX conecta un potenciómetro que maqueta un sensor real.
+            dato.turbidez_raw      = leerMuxPromediado(MUX_CH_TURBIDEZ);   // S1S0 = 00
+            dato.ph_raw            = leerMuxPromediado(MUX_CH_PH);         // S1S0 = 10
+            dato.conductividad_raw = leerMuxPromediado(MUX_CH_CONDUCTIV);  // S1S0 = 11
             xSemaphoreGive(mutex1);
         }
 
+        dato.ph_voltage            = adc_raw_to_voltage(dato.ph_raw);
+        dato.turbidez_voltage      = adc_raw_to_voltage(dato.turbidez_raw);
+        dato.conductividad_voltage = adc_raw_to_voltage(dato.conductividad_raw);
+
+        dato.ph            = voltage_to_ph(dato.ph_voltage);
+        dato.turbidez      = voltage_to_turbidity(dato.turbidez_voltage);
+        dato.conductividad = voltage_to_ec(dato.conductividad_voltage);
+
+        bool cambioActuador = false;
+        float umbralTurbidezUsado = UMBRAL_TURBIDEZ_DEF;
         if (xSemaphoreTake(mutex2, pdMS_TO_TICKS(5)) == pdTRUE) {
+            umbralTurbidezUsado = umbralTurbidez;
+            bool nuevoEstado = (dato.turbidez > umbralTurbidezUsado);
+            if (nuevoEstado != estadoActuador) {
+                estadoActuador = nuevoEstado;
+                cambioActuador = true;
+            }
             dato.actuador = estadoActuador;
             xSemaphoreGive(mutex2);
         } else {
             dato.actuador = false;
+        }
+        aplicarSalidaActuador(dato.actuador);
+        if (cambioActuador) {
+            beepActuador();
+            Serial.printf("[TareaA] Control automático: turbidez %.2f NTU, umbral %.2f NTU, válvula %s\n",
+                          dato.turbidez, umbralTurbidezUsado, dato.actuador ? "CERRADA" : "ABIERTA");
         }
         dato.uptime_ms = (uint32_t)millis();
 
@@ -88,6 +170,11 @@ void tareaA_Sensado(void* param) {
         }
         xQueueSend(cola1, &dato, 0);
 
+        Serial.printf("[ADC] pH: %.2f | EC: %.2f mS/cm | Turbidity: %.2f NTU | VpH: %.2f V | VEC: %.2f V | VTurb: %.2f V | raw pH:%u EC:%u Turb:%u\n",
+                      dato.ph, dato.conductividad, dato.turbidez,
+                      dato.ph_voltage, dato.conductividad_voltage, dato.turbidez_voltage,
+                      dato.ph_raw, dato.conductividad_raw, dato.turbidez_raw);
+
         // Periodo determinista — cumple NFR-01 (±5ms)
         vTaskDelayUntil(&xLastWakeTime, periodo);
     }
@@ -97,13 +184,8 @@ void tareaA_Sensado(void* param) {
 // TAREA B — Control actuador  |  Core 1  |  Prioridad 4
 // ─────────────────────────────────────────────────────────────────
 void tareaB_Actuador(void* param) {
-    pinMode(PIN_LED_VERDE, OUTPUT);
-    pinMode(PIN_LED_ROJO,  OUTPUT);
-    pinMode(PIN_BUZZER,    OUTPUT);
-    // Estado inicial: válvula abierta
-    digitalWrite(PIN_LED_VERDE, HIGH);
-    digitalWrite(PIN_LED_ROJO,  LOW);
-    digitalWrite(PIN_BUZZER,    LOW);
+    inicializarPinesActuador();
+    aplicarSalidaActuador(false);
 
     ComandoRPC cmd;
 
@@ -115,11 +197,8 @@ void tareaB_Actuador(void* param) {
                     estadoActuador = true;
                     xSemaphoreGive(mutex2);
                 }
-                digitalWrite(PIN_LED_VERDE, LOW);
-                digitalWrite(PIN_LED_ROJO,  HIGH);
-                digitalWrite(PIN_BUZZER, HIGH);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                digitalWrite(PIN_BUZZER, LOW);
+                aplicarSalidaActuador(true);
+                beepActuador();
                 Serial.println("[TareaB] Válvula CERRADA — alarma");
 
             } else if (strcmp(cmd.metodo, "desactivarValvula") == 0) {
@@ -127,11 +206,8 @@ void tareaB_Actuador(void* param) {
                     estadoActuador = false;
                     xSemaphoreGive(mutex2);
                 }
-                digitalWrite(PIN_LED_ROJO,  LOW);
-                digitalWrite(PIN_LED_VERDE, HIGH);
-                digitalWrite(PIN_BUZZER, HIGH);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                digitalWrite(PIN_BUZZER, LOW);
+                aplicarSalidaActuador(false);
+                beepActuador();
                 Serial.println("[TareaB] Válvula ABIERTA — normal");
 
             } else if (strcmp(cmd.metodo, "setUmbralPhMin") == 0) {
@@ -165,7 +241,7 @@ void tareaB_Actuador(void* param) {
 void tareaC_Comunicaciones(void* param) {
     mqttClient.setServer(TB_SERVER, TB_PORT);
     mqttClient.setCallback(callbackMQTT);
-    mqttClient.setBufferSize(512);
+    mqttClient.setBufferSize(1024);
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -216,14 +292,40 @@ void tareaC_Comunicaciones(void* param) {
         // ── Publicar telemetría desde Cola 1 ─────────────────────
         TelemetriaData dato;
         if (xQueueReceive(cola1, &dato, 0) == pdTRUE) {
-            StaticJsonDocument<256> doc;
+            StaticJsonDocument<768> doc;
+            char phConUnidad[24];
+            char ecConUnidad[32];
+            char turbidezConUnidad[32];
+            char phVoltajeConUnidad[24];
+            char ecVoltajeConUnidad[24];
+            char turbidezVoltajeConUnidad[24];
+
+            snprintf(phConUnidad, sizeof(phConUnidad), "%.2f pH", dato.ph);
+            snprintf(ecConUnidad, sizeof(ecConUnidad), "%.2f mS/cm", dato.conductividad);
+            snprintf(turbidezConUnidad, sizeof(turbidezConUnidad), "%.2f NTU", dato.turbidez);
+            snprintf(phVoltajeConUnidad, sizeof(phVoltajeConUnidad), "%.3f V", dato.ph_voltage);
+            snprintf(ecVoltajeConUnidad, sizeof(ecVoltajeConUnidad), "%.3f V", dato.conductividad_voltage);
+            snprintf(turbidezVoltajeConUnidad, sizeof(turbidezVoltajeConUnidad), "%.3f V", dato.turbidez_voltage);
+
             doc["ph"]            = serialized(String(dato.ph, 2));
             doc["turbidez"]      = serialized(String(dato.turbidez, 2));
             doc["conductividad"] = serialized(String(dato.conductividad, 2));
+            doc["ph_con_unidad"]            = phConUnidad;
+            doc["turbidez_con_unidad"]      = turbidezConUnidad;
+            doc["conductividad_con_unidad"] = ecConUnidad;
+            doc["ph_voltage"]            = serialized(String(dato.ph_voltage, 3));
+            doc["turbidez_voltage"]      = serialized(String(dato.turbidez_voltage, 3));
+            doc["conductividad_voltage"] = serialized(String(dato.conductividad_voltage, 3));
+            doc["ph_voltage_con_unidad"]            = phVoltajeConUnidad;
+            doc["turbidez_voltage_con_unidad"]      = turbidezVoltajeConUnidad;
+            doc["conductividad_voltage_con_unidad"] = ecVoltajeConUnidad;
+            doc["ph_raw"]            = dato.ph_raw;
+            doc["turbidez_raw"]      = dato.turbidez_raw;
+            doc["conductividad_raw"] = dato.conductividad_raw;
             doc["actuador"]      = estadoAhora;          // bool real: true / false
-            doc["uptime_ms"]     = (uint32_t)millis();
+            doc["uptime_ms"]     = dato.uptime_ms;
 
-            char buffer[256];
+            char buffer[1024];
             serializeJson(doc, buffer);
             mqttClient.publish("v1/devices/me/telemetry", buffer);
         }
@@ -263,7 +365,7 @@ void tareaD_Watchdog(void* param) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// TAREA E — Log + LED  |  Core 1  |  Prioridad 1
+// TAREA E — Log + LED  |  Core 0  |  Prioridad 1
 // ─────────────────────────────────────────────────────────────────
 void tareaE_Log(void* param) {
     pinMode(PIN_LED_STATUS, OUTPUT);
