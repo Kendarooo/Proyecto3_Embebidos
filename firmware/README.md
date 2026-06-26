@@ -1,531 +1,458 @@
 # Proyecto3_Embebidos
-Sistema embebido Edge-to-Cloud para monitoreo de calidad del agua en tiempo real, desarrollado con ESP32 + FreeRTOS y ThingsBoard. Proyecto del curso Taller de Sistemas Embebidos, Escuela de Ingeniería Electrónica, Instituto Tecnológico de Costa Rica. Alineado al ODS 6 — Agua Limpia y Saneamiento. | Grupo Bit Bakers
 
-## Justificación del Problema
+Sistema embebido Edge-to-Cloud para monitoreo de calidad del agua en tiempo real, desarrollado con ESP32, FreeRTOS, MQTT y ThingsBoard. El proyecto pertenece al curso Taller de Sistemas Embebidos de la Escuela de Ingenieria Electronica del Instituto Tecnologico de Costa Rica y se alinea con el ODS 6: Agua Limpia y Saneamiento.
+
+Grupo: Bit Bakers
+
+## Resumen del Sistema
+
+El firmware implementa un nodo IoT con ESP32 que lee tres variables de calidad de agua por medio de entradas analogicas emuladas con potenciometros y un multiplexor analogico:
+
+- pH, en escala 0 a 14.
+- Turbidez, en NTU, con salida inversa: mayor voltaje equivale a agua mas clara.
+- Conductividad electrica, en mS/cm, con rango de maqueta 0 a 20 mS/cm.
+
+Los datos se procesan localmente en el ESP32, se envian a una cola FreeRTOS y se publican por MQTT hacia ThingsBoard. El sistema tambien recibe comandos RPC desde ThingsBoard para abrir o cerrar una valvula representada en el prototipo por LEDs y buzzer, y para modificar umbrales en tiempo de ejecucion.
+
+El firmware actual usa:
+
+- ESP32 DevKit (`esp32dev`) con framework Arduino sobre PlatformIO.
+- FreeRTOS con 5 tareas de usuario.
+- 2 colas FreeRTOS.
+- 2 mutexes.
+- Wi-Fi y MQTT hacia `thingsboard.cloud`.
+- Librerias `PubSubClient` y `ArduinoJson`.
+
+## Justificacion del Problema
 
 ### Contexto Nacional
 
-Costa Rica enfrenta una crisis creciente en la calidad del agua para consumo humano a pesar de su abundancia hídrica. Análisis realizados durante los últimos 15 años identificaron cambios en la calidad del agua sujetos a variables climáticas y errores en los sistemas de distribución, donde una fuente apta en época seca puede presentar un aumento significativo de turbidez durante la temporada lluviosa [1].
+Costa Rica enfrenta una crisis creciente en la calidad del agua para consumo humano a pesar de su abundancia hidrica. Analisis realizados durante los ultimos anos identificaron cambios en la calidad del agua sujetos a variables climaticas y errores en los sistemas de distribucion, donde una fuente apta en epoca seca puede presentar aumentos significativos de turbidez durante la temporada lluviosa [1].
 
-### Problemática en Cartago
+### Problematica en Cartago
 
-La provincia de Cartago concentra algunos de los casos más críticos del país:
+La provincia de Cartago concentra algunos de los casos mas criticos del pais:
 
-- Desde **2022**, Cipreses de Oreamuno enfrenta distribución de agua contaminada con clorotalonil y otros plaguicidas [2].
-- En **marzo de 2024**, la ARESEP solicitó declarar estado de emergencia en la zona norte de Cartago por contaminación con agroquímicos en fuentes de once ASADAS, afectando directamente a **33.000 habitantes**. El 80% del área de protección de 35 nacientes estudiadas estaba invadido por cultivos e infraestructura agrícola [3].
-- En **febrero de 2024**, Turrialba entró en crisis por contaminación con hidrocarburos, requiriendo análisis rigurosos antes de reautorizar el consumo [4].
-- El Ministerio de Salud, AyA, MINAE, MAG y universidades debieron emprender acciones conjuntas de vigilancia y contención en 2024 ante la magnitud del problema [5].
+- Desde 2022, Cipreses de Oreamuno enfrenta distribucion de agua contaminada con clorotalonil y otros plaguicidas [2].
+- En marzo de 2024, la ARESEP solicito declarar estado de emergencia en la zona norte de Cartago por contaminacion con agroquimicos en fuentes de once ASADAS, afectando directamente a 33.000 habitantes. El 80% del area de proteccion de 35 nacientes estudiadas estaba invadido por cultivos e infraestructura agricola [3].
+- En febrero de 2024, Turrialba entro en crisis por contaminacion con hidrocarburos, requiriendo analisis rigurosos antes de reautorizar el consumo [4].
+- El Ministerio de Salud, AyA, MINAE, MAG y universidades debieron emprender acciones conjuntas de vigilancia y contencion en 2024 ante la magnitud del problema [5].
 
-### Causa Raíz
+### Causa Raiz
 
-El problema estructural no es únicamente la presencia de contaminantes, sino la **ausencia de vigilancia continua y automatizada** en los puntos de captación. El monitoreo actual es reactivo, manual y periódico, con tiempos de respuesta lentos que dependen de laboratorios institucionales.
+El problema estructural no es solamente la presencia de contaminantes, sino la ausencia de vigilancia continua y automatizada en puntos de captacion. El monitoreo tradicional es reactivo, manual y periodico, con tiempos de respuesta que dependen de visitas tecnicas y analisis de laboratorio.
 
-### Limitación del Sistema
+### Alcance del Prototipo
 
-Este prototipo opera como capa de alerta temprana de bajo costo. No sustituye análisis de laboratorio certificados para bacterias, metales pesados o agroquímicos específicos.
-
----
-
+Este prototipo funciona como una capa de alerta temprana de bajo costo. No sustituye analisis certificados de laboratorio para bacterias, metales pesados, hidrocarburos o agroquimicos especificos. Las senales analogicas del prototipo se emulan fisicamente con potenciometros conectados al hardware, no por software.
 
 ## Requisitos del Sistema
 
----
-
-### FR — Requisitos Funcionales
-
-#### Módulo de Sensado
-
-**[FR-01] Muestreo periódico de variables físico-químicas**
-El sistema deberá leer de forma periódica y determinista los valores de pH, turbidez y
-conductividad del agua mediante los sensores conectados a los pines ADC del ESP32.
-*Justificación: El monitoreo continuo es la base del sistema de alerta temprana. Sin
-muestreo periódico no es posible detectar cambios bruscos en la calidad del agua.*
-
-**[FR-02] Procesamiento local de señal**
-El sistema deberá convertir las lecturas analógicas crudas del ADC a unidades físicas
-calibradas (pH en escala 0-14, turbidez en NTU, conductividad en µS/cm) antes de
-enviarlas a la cola de comunicaciones.
-*Justificación: Los valores crudos del ADC no tienen significado físico directo. La
-conversión local en el Edge evita enviar datos sin interpretar a la nube.*
-
----
-
-#### Módulo de Procesamiento Local (FreeRTOS)
-
-**[FR-03] Arquitectura multitarea estricta**
-El sistema deberá implementar un mínimo de 5 tareas de usuario en FreeRTOS con
-prioridades diferenciadas, incluyendo obligatoriamente:
-- **Tarea A (Alta prioridad):** Muestreo periódico de sensores y procesamiento local. Su periodo de ejecución debe cumplirse de manera determinista.
-- **Tarea B (Prioridad media):** Ejecución de algoritmos de control local y control de actuadores por comandos directos o remotos (RPC).
-- **Tarea C (Baja prioridad):** Gestión de la pila TCP/IP, reconexión de Wi-Fi y publicación de datos por MQTT hacia ThingsBoard. Esta tarea no debe bloquear el procesador ni degradar el determinismo de la Tarea A.
-
-*Justificación: La asignación de prioridades diferenciadas garantiza que las operaciones
-de red de baja criticidad no interrumpan el sensado, que es la función crítica del sistema.*
-
-**[FR-04] Comunicación entre tareas mediante colas**
-El sistema deberá transferir los datos de telemetría procesados desde la Tarea A hacia
-la Tarea C exclusivamente mediante colas (Queues) de FreeRTOS.
-*Justificación: Las colas garantizan transferencia de datos segura y sin condiciones
-de carrera entre tareas de diferente prioridad.*
-
-**[FR-05] Protección de recursos compartidos**
-El sistema deberá proteger el acceso al bus de sensores y a otros periféricos
-compartidos mediante semáforos o mutexes de FreeRTOS, evitando condiciones de
-carrera e inversión de prioridades.
-*Justificación: Sin protección de recursos compartidos el sistema puede producir
-lecturas corruptas o comportamiento no determinista.*
-
----
-
-#### Módulo de Comunicaciones
-
-**[FR-06] Publicación de telemetría por MQTT**
-El sistema deberá publicar periódicamente un payload JSON estructurado con los
-valores de pH, turbidez y conductividad hacia el broker MQTT de ThingsBoard.
-*Justificación: MQTT es el protocolo estándar de IoT industrial de baja latencia y
-bajo consumo energético, requerido explícitamente por el instructivo del proyecto.*
-
-**[FR-07] Reconexión automática ante caída de red**
-El sistema deberá detectar la pérdida de conectividad Wi-Fi o MQTT y reconectarse
-de forma asíncrona sin bloquear las tareas de sensado y control. No se permite el
-uso de bucles de espera indefinidos (`while(!connected)`) dentro de las tareas principales.
-*Justificación: La disponibilidad del monitoreo local no puede depender de la
-estabilidad de la red. Las tareas críticas deben continuar operando durante
-desconexiones.*
-
----
-
-#### Módulo de Nube (ThingsBoard)
-
-**[FR-08] Visualización de telemetría en tiempo real**
-La plataforma ThingsBoard deberá mostrar en un dashboard los valores actuales e
-históricos de pH, turbidez y conductividad mediante widgets gráficos actualizados
-en tiempo real.
-*Justificación: La visualización continua permite al operador de la ASADA identificar
-tendencias y anomalías sin necesidad de desplazarse al punto de captación.*
-
-**[FR-09] Generación de alarmas automáticas**
-El motor de reglas de ThingsBoard deberá generar una alerta visual cuando cualquier
-variable supere los umbrales críticos definidos (pH < 6.5 o pH > 8.5, turbidez > 4
-NTU según normativa AyA).
-*Justificación: La alerta automática elimina la dependencia de monitoreo humano
-continuo, que es precisamente la debilidad del sistema actual en Cartago.*
-
-**[FR-10] Control remoto mediante RPC**
-El dashboard de ThingsBoard deberá permitir al operador enviar comandos RPC hacia
-la ESP32 para: (a) activar o desactivar el actuador físico, y (b) modificar en tiempo
-real las constantes de umbral de alarma, con respuesta confirmada en menos de
-1 segundo.
-*Justificación: La modificación remota de umbrales permite adaptar el sistema a
-condiciones estacionales sin reprogramar el firmware. El control del actuador permite
-aislar una fuente contaminada sin desplazamiento físico al sitio.*
-
----
-
-#### Módulo de Actuación
-
-**[FR-11] Control de actuador con retroalimentación de estado**
-El sistema deberá controlar un actuador físico (válvula o bomba) y reportar su estado
-actual (activo/inactivo) de vuelta a ThingsBoard como atributo del dispositivo.
-*Justificación: La retroalimentación de estado confirma al operador que el comando
-RPC fue ejecutado correctamente en el hardware.*
-
----
-
-### NFR — Requisitos No Funcionales
-
-#### Módulo de Procesamiento Local (FreeRTOS)
-
-**[NFR-01] Determinismo temporal de la tarea de sensado**
-El periodo de ejecución de la Tarea A no deberá desviarse más de ±5 ms de su
-periodo nominal, incluso bajo carga máxima de la pila TCP/IP.
-*Justificación: El determinismo es la propiedad fundamental de un RTOS. Sin él el
-sistema no puede garantizar que detectará un evento de contaminación dentro de una
-ventana de tiempo predecible.*
-
-**[NFR-02] Operación autónoma ante desconexión de red**
-El sistema deberá continuar ejecutando las tareas de sensado y control de forma
-ininterrumpida durante al menos 30 segundos de desconexión total de red, sin
-requerir intervención manual ni reset físico del microcontrolador.
-*Justificación: El instructivo exige explícitamente esta prueba de resiliencia durante
-la demostración E2, donde el profesor desconectará el enrutador durante 30 segundos.*
-
----
-
-#### Módulo de Comunicaciones
-
-**[NFR-03] Latencia de publicación MQTT**
-El tiempo entre la adquisición de una muestra y su disponibilidad en el dashboard de
-ThingsBoard no deberá superar los 2 segundos bajo condiciones normales de red.
-*Justificación: Una latencia mayor reduciría la utilidad del sistema como herramienta
-de alerta temprana ante eventos de contaminación aguda.*
-
----
-
-#### Módulo de Nube (ThingsBoard)
-
-**[NFR-04] Tiempo de respuesta RPC**
-El actuador físico deberá responder a un comando RPC emitido desde ThingsBoard
-en menos de 1 segundo desde que el operador ejecuta la acción en el dashboard.
-*Justificación: Una respuesta lenta en una situación de emergencia hídrica puede
-significar que agua contaminada continúe distribuyéndose durante el tiempo de
-latencia.*
-
----
-
-### CON — Restricciones
-
-#### Módulo de Procesamiento Local (FreeRTOS)
-
-**[CON-01] Plataforma de hardware**
-El sistema deberá ejecutarse exclusivamente sobre el SoC ESP32 con procesador de
-doble núcleo Tensilica Xtensa LX6, sin posibilidad de migrar a otra plataforma
-durante el desarrollo del proyecto.
-
-**[CON-02] Sistema operativo**
-El firmware deberá desarrollarse obligatoriamente sobre FreeRTOS. No se permite
-el uso de un bucle secuencial clásico `void loop()` con `delay()` bloqueantes como
-arquitectura principal.
-
----
-
-#### Módulo de Sensado
-
-**[CON-03] Pines ADC permitidos**
-Los sensores analógicos deberán conectarse exclusivamente a pines del ADC1 del
-ESP32 (GPIO 32–39). El ADC2 queda prohibido debido a su incompatibilidad con el
-módulo Wi-Fi activo.
-
-**[CON-04] Emulación analógica de sensores**
-En caso de que algún sensor físico sea de difícil acceso, se permite su emulación
-mediante generadores de señal analógica por hardware (potenciómetro o DAC).
-No se acepta la emulación por software puro como sustituto de una señal física
-en el pin ADC.
-*Justificación: El instructivo permite expresamente esta modalidad condicionada a
-justificación por dificultad de acceso al sensor.*
-
----
-
-#### Módulo de Comunicaciones
-
-**[CON-05] Protocolo de comunicación**
-El protocolo de enlace entre el ESP32 y ThingsBoard deberá ser MQTT con payload
-en formato JSON. El uso de HTTP solo es admisible con justificación energética
-documentada.
-
----
-
-#### Módulo de Nube (ThingsBoard)
-
-**[CON-06] Plataforma de nube**
-La visualización, gestión de alarmas y control remoto deberán implementarse
-exclusivamente sobre ThingsBoard. No se permite el uso de plataformas alternativas
-como AWS IoT, Azure IoT Hub o Node-RED como sustitutos.
-
-## Casos de Uso
-
-### CU01 — Monitorear calidad del agua en tiempo real
-**Identificador:** CU01 - Monitorear calidad del agua en tiempo real  
-**Actores:** Operador de ASADA  
-**Propósito:** Permitir al operador visualizar en tiempo real los valores de pH, turbidez y
-conductividad del agua captada, para detectar anomalías en la calidad del agua sin
-necesidad de desplazarse al punto de captación.  
-**Precondiciones:** El nodo ESP32 está encendido y conectado a la red Wi-Fi, el broker
-MQTT está activo, el dashboard de ThingsBoard está configurado y el operador tiene
-acceso a la plataforma.  
-**Postcondiciones:** El operador visualiza los valores actuales e históricos de las variables
-monitoreadas en el dashboard de ThingsBoard.  
-**Flujo principal:** El operador accede al dashboard de ThingsBoard desde un navegador
-web. El sistema muestra los valores más recientes de pH, turbidez y conductividad
-publicados por el ESP32 vía MQTT. El operador analiza las gráficas históricas para
-identificar tendencias o cambios bruscos en la calidad del agua.
-
----
-
-### CU02 — Recibir alerta de contaminación
-**Identificador:** CU02 - Recibir alerta de contaminación  
-**Actores:** Operador de ASADA  
-**Propósito:** Notificar al operador cuando alguna variable físico-química supera los
-umbrales críticos definidos, para que pueda tomar acciones correctivas de forma
-inmediata.  
-**Precondiciones:** CU01 está activo, el motor de reglas de ThingsBoard tiene configurada
-al menos una regla de negocio con umbrales críticos definidos.  
-**Postcondiciones:** El operador recibe una alerta visual en el dashboard de ThingsBoard
-indicando la variable que superó el umbral y su valor actual.  
-**Flujo principal:** El ESP32 publica un valor que supera el umbral crítico configurado. El
-motor de reglas de ThingsBoard detecta la condición y genera un estado de alerta. El
-dashboard despliega una notificación visual al operador indicando la variable afectada,
-su valor actual y el umbral superado.
-
----
-
-### CU03 — Controlar actuador remotamente
-**Identificador:** CU03 - Controlar actuador remotamente  
-**Actores:** Operador de ASADA  
-**Propósito:** Permitir al operador activar o desactivar el actuador físico (válvula o bomba)
-desde ThingsBoard mediante un comando RPC, para aislar una fuente contaminada sin
-necesidad de desplazarse al sitio.  
-**Precondiciones:** CU01 está activo, el ESP32 está conectado al broker MQTT y el
-widget de control RPC está configurado en el dashboard.  
-**Postcondiciones:** El actuador cambia su estado físico (activo/inactivo) y ThingsBoard
-refleja el nuevo estado como atributo del dispositivo en menos de 1 segundo.  
-**Flujo principal:** El operador identifica una anomalía en la calidad del agua. El operador
-accede al widget de control en el dashboard de ThingsBoard y emite un comando RPC.
-ThingsBoard transmite el comando al ESP32 vía MQTT. La Tarea B del firmware ejecuta
-el comando y cambia el estado del actuador. El ESP32 reporta el nuevo estado de vuelta
-a ThingsBoard como confirmación.
-
----
-
-### CU04 — Modificar umbral de alarma
-**Identificador:** CU04 - Modificar umbral de alarma  
-**Actores:** Administrador técnico  
-**Propósito:** Permitir al administrador técnico modificar remotamente las constantes de
-umbral crítico de cada variable físico-química, para adaptar el sistema a condiciones
-estacionales sin necesidad de reprogramar el firmware.  
-**Precondiciones:** El administrador técnico tiene acceso al dashboard de ThingsBoard
-con permisos de configuración, el ESP32 está conectado al broker MQTT.  
-**Postcondiciones:** El nuevo valor de umbral queda almacenado en el ESP32 y el motor
-de reglas de ThingsBoard utiliza el valor actualizado para las alertas subsiguientes.  
-**Flujo principal:** El administrador técnico accede al widget de configuración en el
-dashboard de ThingsBoard. Ingresa el nuevo valor de umbral para la variable deseada y
-emite el comando RPC correspondiente. El ESP32 recibe el comando, actualiza la
-constante de umbral en memoria y confirma el cambio a ThingsBoard.
-
----
-
-### CU05 — Consultar historial de telemetría
-**Identificador:** CU05 - Consultar historial de telemetría  
-**Actores:** Operador de ASADA, Administrador técnico  
-**Propósito:** Permitir consultar el registro histórico de las variables monitoreadas para
-identificar patrones de contaminación, correlacionar eventos con actividad agrícola o
-climática y generar evidencia técnica ante autoridades como el AyA o el MINAE.  
-**Precondiciones:** El sistema ha estado operando y ThingsBoard ha almacenado datos
-históricos de telemetría.  
-**Postcondiciones:** El usuario visualiza las series temporales de las variables
-seleccionadas en el rango de fechas consultado.  
-**Flujo principal:** El usuario accede al dashboard de ThingsBoard y selecciona el rango
-de fechas a consultar. El sistema despliega las series temporales de pH, turbidez y
-conductividad para el periodo seleccionado. El usuario analiza los datos para identificar
-patrones o generar reportes.
-
-![Diagrama de casos de uso](img/diagrama_casos_uso.png)
-
-## Concepto de Operaciones (ConOps)
-
-El sistema opera de forma autónoma las 24 horas con intervención humana únicamente cuando se detecta una anomalía o se requiere una acción de control remoto. Se definen tres escenarios de operación:
-
-**Flujo normal:** La Tarea A muestrea periódicamente pH, turbidez y conductividad. Los datos pasan por una cola FreeRTOS a la Tarea C, que los publica por MQTT hacia ThingsBoard. El operador de ASADA visualiza la telemetría en tiempo real desde el dashboard sin desplazarse al punto de captación.
-
-**Fallo de red:** Ante una desconexión, las Tareas A y B continúan operando de forma ininterrumpida. La Tarea C ejecuta reconexión asíncrona automática sin intervención manual ni reset físico del microcontrolador.
-
-**Flujo de alarma:** Cuando una variable supera el umbral crítico, el motor de reglas de ThingsBoard genera una alerta visual. El operador emite un comando RPC para activar el actuador físico (válvula o bomba), que responde en menos de 1 segundo y confirma su nuevo estado al dashboard.
-
-![ConOps](img/Casos_uso.png)
-
-## Diagrama de Definición de Bloques (BDD)
-
-El BDD describe la descomposición física del sistema en sus bloques constitutivos y las
-relaciones entre ellos. El bloque raíz es el **Sistema de Monitoreo de Calidad del Agua**,
-que contiene los siguientes sub-bloques:
-
-- **ESP32 SoC:** Núcleo del sistema Edge. Ejecuta FreeRTOS con cinco tareas concurrentes,
-gestiona la adquisición de datos mediante el ADC1, controla el actuador por GPIO y mantiene
-la conectividad Wi-Fi con ThingsBoard.
-
-- **Sensor de pH, Sensor de Turbidez y Sensor de Conductividad:** Tres sensores analógicos
-conectados al ADC1 del ESP32 (GPIO 32–39). Entregan señales de 0 a 3.3V proporcionales a
-las variables físico-químicas del agua. Quedan excluidos del ADC2 por incompatibilidad con
-el módulo Wi-Fi activo.
-
-- **Módulo Relé:** Interfaz de potencia entre el ESP32 y la válvula solenoide. Recibe una
-señal digital desde un GPIO del ESP32 y conmuta la carga eléctrica de la válvula.
-
-- **Válvula Solenoide:** Actuador físico del sistema. Controlada por el relé, permite aislar
-la fuente de agua ante una detección de contaminación. Reporta su estado de vuelta al ESP32
-como retroalimentación.
-
-- **ThingsBoard Cloud:** Capa de nube del sistema. Recibe telemetría por MQTT, la visualiza
-en un dashboard en tiempo real, ejecuta reglas de negocio para generar alarmas automáticas
-y envía comandos RPC de vuelta al ESP32 para control remoto del actuador.
-
-![BDD](img/dig3.png)
-
-## Diagrama de Bloques Internos (IBD)
-
-El IBD describe los flujos de información y energía entre los bloques internos del sistema,
-organizados en cuatro módulos funcionales:
-
-**M1 — Sensado:** Tres sensores analógicos (pH, turbidez y conductividad) entregan señales
-de voltaje entre 0 y 3.3V hacia la Tarea A del ESP32 a través del ADC1.
-
-**M2 — Procesamiento FreeRTOS:** La Tarea A realiza el muestreo periódico y deposita los
-datos estructurados en la Cola FreeRTOS. La Cola transfiere la telemetría procesada hacia
-la Tarea C de comunicaciones. La Tarea B recibe señales de control de la Tarea A y gobierna
-el actuador físico.
-
-**M3 — Actuación:** El Módulo Relé recibe una señal digital GPIO de 3.3V desde la Tarea B
-y conmuta la corriente de 12VDC hacia la Válvula Solenoide. La válvula reporta su estado
-de vuelta a la Tarea B como señal de feedback.
-
-**M4 — Cloud ThingsBoard:** La Tarea C publica la telemetría por MQTT/JSON hacia el
-Dashboard. Cuando una variable supera el umbral crítico, el Motor de Reglas genera una
-alarma y activa el módulo de Control RPC, que envía el comando de vuelta al ESP32.
-
-![IBD](img/idd.png)
+### Requisitos Funcionales
+
+| ID | Requisito | Estado en el firmware |
+|----|-----------|-----------------------|
+| FR-01 | Muestreo periodico de pH, turbidez y conductividad. | Implementado en `tareaA_Sensado`, periodo de 1000 ms. |
+| FR-02 | Conversion de ADC crudo a unidades fisicas. | Implementado: pH 0-14, turbidez 0-10 NTU, conductividad 0-20 mS/cm. |
+| FR-03 | Arquitectura multitarea estricta con al menos 5 tareas. | Implementado con tareas A, B, C, D y E. |
+| FR-04 | Comunicacion entre tareas mediante colas. | Implementado con Cola 1 para telemetria y Cola 2 para RPC. |
+| FR-05 | Proteccion de recursos compartidos. | Implementado con Mutex 1 para ADC/MUX y Mutex 2 para actuador/umbrales. |
+| FR-06 | Publicacion MQTT con payload JSON. | Implementado en `tareaC_Comunicaciones`. |
+| FR-07 | Reconexion automatica Wi-Fi/MQTT no bloqueante. | Implementado con reintentos temporizados cada 5 s. |
+| FR-08 | Visualizacion en ThingsBoard. | Soportado por telemetria MQTT; el dashboard se configura en ThingsBoard. |
+| FR-09 | Alarmas automaticas en ThingsBoard. | Soportado por payload y umbrales; la Rule Chain se configura en ThingsBoard. |
+| FR-10 | Control remoto por RPC. | Implementado para valvula y umbrales. |
+| FR-11 | Control de actuador con retroalimentacion. | Implementado mediante `estadoValvula` como atributo MQTT. |
+
+### Requisitos No Funcionales
+
+| ID | Requisito | Estado en el firmware |
+|----|-----------|-----------------------|
+| NFR-01 | Determinismo temporal de la tarea de sensado. | Implementado con `vTaskDelayUntil()` y prioridad maxima de usuario. |
+| NFR-02 | Operacion autonoma ante desconexion de red. | Implementado: sensado y actuacion siguen en Core 1 aunque Wi-Fi/MQTT falle. |
+| NFR-03 | Latencia de publicacion MQTT menor a 2 s en red normal. | Soportado por periodo de sensado de 1 s y ciclo MQTT de 100 ms. |
+| NFR-04 | Respuesta RPC menor a 1 s. | Soportado por callback MQTT y Cola 2; se responde recepcion inmediatamente. |
+
+### Restricciones
+
+| ID | Restriccion | Aplicacion |
+|----|-------------|------------|
+| CON-01 | Plataforma ESP32. | Proyecto configurado para `esp32dev`. |
+| CON-02 | Uso obligatorio de FreeRTOS. | `loop()` se elimina con `vTaskDelete(NULL)`; el control queda en tareas. |
+| CON-03 | Uso de ADC1 y no ADC2. | Salida comun del MUX conectada a GPIO35, perteneciente a ADC1. |
+| CON-04 | Emulacion analogica permitida por hardware. | Sensores maquetados con potenciometros conectados al MUX. |
+| CON-05 | MQTT con JSON. | Implementado con `PubSubClient` y `ArduinoJson`. |
+| CON-06 | Plataforma ThingsBoard. | Firmware publica y recibe comandos usando topics de ThingsBoard. |
+
+## Hardware Implementado
+
+### Placa
+
+- ESP32 DevKit compatible con `board = esp32dev`.
+- Comunicacion serial a 115200 baudios.
+- Carga por `/dev/ttyUSB0` a 921600 baudios, segun `platformio.ini`.
+
+### Sensado Analogico con MUX
+
+La propuesta inicial contemplaba sensores analogicos conectados directamente a pines ADC1. En la implementacion final se uso un multiplexor analogico para concentrar las tres senales en una sola entrada ADC1 del ESP32.
+
+| Senal | GPIO / Canal | Macro | Descripcion |
+|-------|--------------|-------|-------------|
+| Salida comun del MUX | GPIO35 | `PIN_MUX_ADC` | Entrada ADC1 usada por los tres sensores. |
+| Selector S0 | GPIO33 | `PIN_MUX_S0` | Bit bajo de seleccion del MUX. |
+| Selector S1 | GPIO14 | `PIN_MUX_S1` | Bit alto de seleccion del MUX. |
+| Turbidez | Canal `00` | `MUX_CH_TURBIDEZ` | Potenciometro de turbidez. |
+| pH | Canal `10` | `MUX_CH_PH` | Potenciometro de pH. |
+| Conductividad | Canal `11` | `MUX_CH_CONDUCTIV` | Potenciometro de conductividad. |
+
+La lectura de cada canal usa 16 muestras ADC y un tiempo de asentamiento del MUX de 1000 us. Esto reduce ruido y evita lecturas contaminadas por el cambio de canal.
+
+### Actuador y Senalizacion
+
+El actuador final del sistema se representa con LEDs y buzzer. En una instalacion real, el mismo estado logico podria conectarse a una etapa de potencia o rele para manejar una valvula solenoide.
+
+| GPIO | Macro | Funcion |
+|------|-------|---------|
+| GPIO26 | `PIN_LED_VERDE` | Valvula abierta / sistema normal. |
+| GPIO27 | `PIN_LED_ROJO` | Valvula cerrada / alarma critica. |
+| GPIO25 | `PIN_BUZZER` | Beep de 200 ms en transiciones. |
+| GPIO2 | `PIN_LED_STATUS` | LED de estado Wi-Fi/MQTT. |
+
+Los LEDs verde y rojo son mutuamente excluyentes. El buzzer no queda activo de forma continua; solo emite un pulso cuando cambia el estado de la valvula.
+
+## Configuracion del Proyecto
+
+Archivo principal de configuracion: `platformio.ini`.
+
+```ini
+[env:esp32dev]
+platform = espressif32
+board = esp32dev
+framework = arduino
+monitor_speed = 115200
+upload_speed = 921600
+upload_port = /dev/ttyUSB0
+lib_deps =
+    knolleary/PubSubClient@^2.8
+    bblanchon/ArduinoJson@^6.21.0
+```
+
+Antes de compilar o cargar, revisar en `src/config.h`:
+
+- `WIFI_SSID`
+- `WIFI_PASS`
+- `TB_SERVER`
+- `TB_PORT`
+- `TB_TOKEN`
+- Pines usados por MUX, actuador y LED de estado
+- Umbrales por defecto
+
+Comandos utiles:
+
+```bash
+pio run
+pio run --target upload
+pio device monitor
+```
 
 ## Arquitectura FreeRTOS
 
-El firmware del ESP32 implementa una arquitectura multitarea estricta sobre FreeRTOS con
-cinco tareas de usuario, dos colas de comunicación y dos mutexes de protección de recursos.
+El sistema divide responsabilidades entre cinco tareas de usuario. Las tareas de tiempo real se fijan al Core 1 y las tareas asociadas a conectividad se fijan al Core 0, donde tambien opera la pila Wi-Fi del ESP32.
 
-**Asignación de cores:**
+### Asignacion de Cores
 
-| Core | Tareas | Justificación |
-|------|--------|---------------|
-| Core 1 | TareaA (P5), TareaB (P4), TareaD (P3) | Sensado y control determinista, aislados de la pila TCP/IP |
-| Core 0 | TareaC (P2), TareaE (P1) | Conectividad y servicios; el Wi-Fi stack de ESP-IDF corre en Core 0 |
+| Core | Tareas | Proposito |
+|------|--------|-----------|
+| Core 1 | TareaA P5, TareaB P4, TareaD P3 | Sensado, control y supervision local. |
+| Core 0 | TareaC P2, TareaE P1 | Wi-Fi, MQTT, RPC y LED de conectividad. |
 
-**Tareas:**
+### Tareas
 
-- **Tarea A (Prioridad 5 — Alta · Core 1):** Ejecuta el muestreo periódico de los tres sensores
-analógicos cada 500ms mediante el ADC1. Construye el paquete `TelemetriaData` completo (pH,
-turbidez, conductividad, estado del actuador leído bajo Mutex 2, y `uptime_ms`) y lo deposita
-en Cola 1. Es la tarea de mayor prioridad, garantizando determinismo temporal (NFR-01: ±5 ms).
+| Tarea | Prioridad | Core | Funcion |
+|-------|-----------|------|---------|
+| Tarea A: Sensado | 5 | 1 | Lee MUX/ADC, convierte unidades, aplica control automatico por turbidez y envia telemetria a Cola 1. |
+| Tarea B: Actuador | 4 | 1 | Procesa comandos RPC desde Cola 2 y actualiza actuador/umbrales. |
+| Tarea C: Comunicaciones | 2 | 0 | Gestiona Wi-Fi, MQTT, publicacion de telemetria, atributos y suscripcion RPC. |
+| Tarea D: Watchdog | 3 | 1 | Reporta por serial el estado de Wi-Fi, MQTT, Cola 1 y actuador. |
+| Tarea E: Log/LED | 1 | 0 | Parpadea el LED integrado segun estado de conectividad. |
 
-- **Tarea B (Prioridad 4 — Media-alta · Core 1):** Controla el actuador físico mediante
-tres GPIOs: LED verde (GPIO 26), LED rojo (GPIO 27) y buzzer (GPIO 25). Procesa los comandos
-RPC recibidos desde ThingsBoard a través de Cola 2. Al activar o desactivar la válvula actualiza
-`estadoActuador` bajo Mutex 2, cambia los LEDs y emite un beep de 200 ms. Los umbrales también
-se actualizan bajo Mutex 2.
+### Colas y Mutexes
 
-- **Tarea C (Prioridad 2 — Baja · Core 0):** Gestiona la conectividad Wi-Fi y el enlace MQTT
-con ThingsBoard. Consume paquetes de Cola 1 y los publica como payload JSON en
-`v1/devices/me/telemetry`. Detecta cambios en el estado de la válvula y publica el atributo
-`estadoValvula` en `v1/devices/me/attributes` únicamente cuando cambia. Recibe comandos RPC
-y los encola en Cola 2 hacia Tarea B. Ejecuta reconexión asíncrona sin bloquear tareas de
-mayor prioridad.
+| Recurso | Tipo | Uso |
+|---------|------|-----|
+| `cola1` | Queue de `TelemetriaData`, tamano 10 | Tarea A envia telemetria a Tarea C. Si se llena, se descarta el dato mas antiguo. |
+| `cola2` | Queue de `ComandoRPC`, tamano 5 | Tarea C envia comandos RPC a Tarea B. |
+| `mutex1` | Mutex | Protege el acceso al MUX/ADC durante lectura de sensores. |
+| `mutex2` | Mutex | Protege `estadoActuador`, `umbralPhMin`, `umbralPhMax` y `umbralTurbidez`. |
 
-- **Tarea D (Prioridad 3 — Media · Core 1):** Actúa como watchdog del sistema, supervisando
-el estado de WiFi, MQTT y la ocupación de Cola 1 cada 2000 ms para detectar bloqueos o fallos.
+## Procesamiento de Sensores
 
-- **Tarea E (Prioridad 1 — Mínima · Core 0):** Indica el estado de conectividad mediante
-parpadeo del LED integrado (GPIO 2): rápido (100 ms) = sistema OK, medio (300 ms) = WiFi sin
-MQTT, lento (800 ms) = sin conexión.
+El ADC se configura a 12 bits con atenuacion `ADC_11db`, por lo que el firmware trabaja con valores crudos de 0 a 4095 y referencia de 3.3 V.
 
-**Mecanismos de sincronización:**
+Conversiones implementadas:
 
-- **Cola 1:** Canal unidireccional Tarea A → Tarea C. Transporta `TelemetriaData` con los
-cinco campos del payload (pH, turbidez, conductividad, actuador, uptime_ms).
+```cpp
+voltaje = (raw / 4095.0) * 3.3
+pH = (voltaje / 3.3) * 14.0
+conductividad = (voltaje / 3.3) * 20.0
+turbidez = ((3.3 - voltaje) / 3.3) * 10.0
+```
 
-- **Cola 2:** Canal unidireccional Tarea C → Tarea B. Transporta comandos RPC (`ComandoRPC`:
-método, valor, requestId).
+Rangos finales:
 
-- **Mutex 1:** Protege el acceso exclusivo al bus ADC1, evitando condiciones de carrera
-durante la lectura de sensores.
+| Variable | Rango | Unidad | Nota |
+|----------|-------|--------|------|
+| pH | 0 a 14 | pH | Maqueta tipo SEN0161-V2. |
+| Conductividad | 0 a 20 | mS/cm | Maqueta tipo DFR0300. |
+| Turbidez | 0 a 10 | NTU | Salida inversa: 3.3 V representa agua clara. |
 
-- **Mutex 2:** Protege `estadoActuador`, `umbralPhMin`, `umbralPhMax` y `umbralTurbidez`.
-Todos son escritos por Tarea B (vía RPC) y leídos por Tarea A; sin protección existe riesgo
-de lectura parcial en el ESP32 dual-core.
+El periodo real de sensado es de 1000 ms, definido por `PERIODO_SENSADO_MS`.
 
-![Arquitectura FreeRTOS](img/freertos.png)
+## Control Local
 
-## Integración MQTT — ThingsBoard
+La Tarea A aplica control automatico local usando el umbral de turbidez:
 
-### Topics y payloads
+- Si `turbidez > umbralTurbidez`, el actuador pasa a activo, interpretado como valvula cerrada.
+- Si `turbidez <= umbralTurbidez`, el actuador pasa a inactivo, interpretado como valvula abierta.
+- Cuando el estado cambia, se actualizan LEDs y se emite un beep.
 
-El firmware publica en dos topics distintos con responsabilidades separadas:
+Los umbrales de pH (`umbralPhMin` y `umbralPhMax`) se pueden modificar por RPC y quedan protegidos por `mutex2`. En el firmware actual, esos umbrales quedan disponibles para logica remota/dashboard, pero el cierre automatico local se ejecuta por turbidez.
 
-**Telemetría** (`v1/devices/me/telemetry`) — publicado cada vez que hay dato en Cola 1 (~500 ms):
+Umbrales por defecto:
+
+| Umbral | Valor |
+|--------|-------|
+| pH minimo | 6.5 |
+| pH maximo | 8.5 |
+| Turbidez | 8.0 NTU |
+
+## Integracion MQTT y ThingsBoard
+
+### Conexion
+
+El firmware se conecta a:
+
+- Servidor: `thingsboard.cloud`
+- Puerto MQTT: `1883`
+- Cliente: `AquaWatchCR`
+- Token: definido en `TB_TOKEN`
+
+La reconexion Wi-Fi y MQTT se realiza sin ciclos bloqueantes indefinidos. Los reintentos se espacian cada 5 s y las tareas criticas continuan operando.
+
+### Topic de Telemetria
+
+Topic:
+
+```text
+v1/devices/me/telemetry
+```
+
+Payload real publicado:
+
 ```json
 {
   "ph": 7.23,
   "turbidez": 2.15,
-  "conductividad": 412.80,
+  "conductividad": 10.42,
+  "ph_con_unidad": "7.23 pH",
+  "turbidez_con_unidad": "2.15 NTU",
+  "conductividad_con_unidad": "10.42 mS/cm",
+  "ph_voltage": 1.704,
+  "turbidez_voltage": 2.591,
+  "conductividad_voltage": 1.719,
+  "ph_voltage_con_unidad": "1.704 V",
+  "turbidez_voltage_con_unidad": "2.591 V",
+  "conductividad_voltage_con_unidad": "1.719 V",
+  "ph_raw": 2115,
+  "turbidez_raw": 3215,
+  "conductividad_raw": 2133,
   "actuador": false,
   "uptime_ms": 14823
 }
 ```
-- `actuador` es un booleano JSON nativo (`true`/`false`), no entero ni string. ThingsBoard interpreta el tipo directamente del JSON.
-- `uptime_ms` permite detectar reinicios del dispositivo en el dashboard.
 
-**Atributos del dispositivo** (`v1/devices/me/attributes`) — publicado únicamente cuando el estado cambia:
+El payload incluye valores numericos, versiones con unidad para visualizacion directa, voltajes, lecturas ADC crudas, estado del actuador y tiempo desde el arranque.
+
+### Topic de Atributos
+
+Topic:
+
+```text
+v1/devices/me/attributes
+```
+
+Payload:
+
 ```json
 { "estadoValvula": false }
 ```
-- Se publica al conectar por primera vez, al reconectar tras una caída MQTT, y cada vez que la Tarea B modifica `estadoActuador`.
-- Usar atributos (no telemetría) garantiza que ThingsBoard persiste el último estado conocido de la válvula entre reconexiones del dispositivo.
 
-### Suscripción RPC
+Este atributo se publica al conectar, al reconectar MQTT y cada vez que cambia el estado de la valvula. ThingsBoard lo puede usar como ultimo estado conocido del dispositivo.
 
-El firmware se suscribe a `v1/devices/me/rpc/request/+` en cada reconexión MQTT. Sin esta suscripción los comandos `activarValvula` / `desactivarValvula` enviados por la Rule Chain nunca llegan al ESP32.
+### RPC
 
-El callback responde de forma inmediata con `{"status":"ok"}` al topic `v1/devices/me/rpc/response/{requestId}` antes de encolar el comando en Cola 2 hacia la Tarea B.
+Suscripcion:
 
-### Métodos RPC soportados
+```text
+v1/devices/me/rpc/request/+
+```
 
-| Método              | Tipo params | Efecto en Tarea B                                            |
-|---------------------|-------------|--------------------------------------------------------------|
-| `activarValvula`    | —           | `estadoActuador=true`, LED rojo ON, LED verde OFF, beep 200ms |
-| `desactivarValvula` | —           | `estadoActuador=false`, LED verde ON, LED rojo OFF, beep 200ms |
-| `setUmbralPhMin`    | float       | Actualiza `umbralPhMin` en RAM (bajo Mutex 2)                |
-| `setUmbralPhMax`    | float       | Actualiza `umbralPhMax` en RAM (bajo Mutex 2)                |
-| `setUmbralTurbidez` | float       | Actualiza `umbralTurbidez` en RAM (bajo Mutex 2)             |
+Respuesta:
 
-### Hardware del actuador
+```text
+v1/devices/me/rpc/response/{requestId}
+```
 
-| GPIO | Macro           | Función                        |
-|------|-----------------|--------------------------------|
-| 26   | `PIN_LED_VERDE` | Válvula abierta — sistema normal |
-| 27   | `PIN_LED_ROJO`  | Válvula cerrada — alarma crítica |
-| 25   | `PIN_BUZZER`    | Beep 200 ms en cada transición  |
-| 2    | `PIN_LED_STATUS`| Parpadeo de estado WiFi/MQTT (TareaE) |
+El callback MQTT responde inmediatamente:
 
-Los LEDs verde y rojo son **mutuamente excluyentes** en todo momento. El buzzer suena únicamente en la transición de estado, no de forma continua. El código actual usa un pulso digital de 200 ms (compatible con buzzer activo); un buzzer pasivo requiere PWM vía `tone()` o LEDC.
+```json
+{ "status": "ok" }
+```
 
----
+Luego encola el comando en `cola2` para que la Tarea B lo ejecute.
 
-## Prototipo Conceptual — Dashboard ThingsBoard
+Metodos soportados:
 
-El dashboard de ThingsBoard centraliza la visualización, el control remoto y la gestión
-de alarmas del sistema. Se organiza en tres secciones principales:
+| Metodo | Parametro | Efecto |
+|--------|-----------|--------|
+| `activarValvula` | opcional; el valor no se usa | Cierra la valvula: LED rojo ON, LED verde OFF, beep. |
+| `desactivarValvula` | opcional; el valor no se usa | Abre la valvula: LED verde ON, LED rojo OFF, beep. |
+| `setUmbralPhMin` | float o `params.value` | Actualiza `umbralPhMin` en RAM. |
+| `setUmbralPhMax` | float o `params.value` | Actualiza `umbralPhMax` en RAM. |
+| `setUmbralTurbidez` | float o `params.value` | Actualiza `umbralTurbidez` en RAM. |
 
-**Sección 1 — Telemetría en tiempo real:**
-Muestra los valores actuales e históricos de las tres variables monitoreadas mediante
-gráficas de línea y tarjetas de valor numérico. Un indicador de semáforo (verde/amarillo/rojo)
-refleja el estado general de la calidad del agua según los umbrales configurados.
+## Casos de Uso
 
-- Gráfica de línea: pH (umbral crítico: < 6.5 o > 8.5)
-- Gráfica de línea: Turbidez en NTU (umbral crítico: > 4 NTU)
-- Gráfica de línea: Conductividad en µS/cm
-- Tarjetas de valor numérico: valores actuales de las tres variables
-- Semáforo de estado: verde (normal), amarillo (precaución), rojo (alerta)
+### CU01: Monitorear Calidad del Agua en Tiempo Real
 
-**Sección 2 — Control remoto (RPC):**
-Permite al operador interactuar directamente con el ESP32 desde el navegador sin
-desplazarse al punto de captación.
+Actor: operador de ASADA.
 
-- Botón de activación/desactivación de válvula solenoide
-- Indicador de estado del actuador (abierto/cerrado)
-- Slider de modificación de umbral de pH en tiempo real
+El operador accede al dashboard de ThingsBoard y observa valores actuales e historicos de pH, turbidez y conductividad. El ESP32 publica los datos por MQTT cada vez que la Tarea C consume una muestra de Cola 1.
 
-**Sección 3 — Alarmas e historial:**
-Registra todos los eventos críticos y permite al operador consultar el historial
-de anomalías para generar reportes ante el AyA o el MINAE.
+### CU02: Recibir Alerta de Contaminacion
 
-- Panel de alarmas activas con variable afectada y valor registrado
-- Historial de eventos con marca de tiempo
+Actor: operador de ASADA.
 
-![Dashboard ThingsBoard](img/dashboard.png)
+ThingsBoard puede generar alarmas mediante Rule Chains cuando una variable supera un umbral configurado. El firmware entrega las variables necesarias para esas reglas.
+
+### CU03: Controlar Actuador Remotamente
+
+Actor: operador de ASADA.
+
+El operador envia un RPC desde ThingsBoard. El ESP32 recibe el mensaje, responde al request, encola el comando y la Tarea B actualiza el estado fisico representado por LEDs y buzzer.
+
+### CU04: Modificar Umbral de Alarma
+
+Actor: administrador tecnico.
+
+El administrador envia un RPC con el nuevo valor de umbral. El ESP32 actualiza el valor en RAM bajo `mutex2`. Estos valores no se persisten en memoria no volatil, por lo que vuelven a los valores por defecto despues de reiniciar.
+
+### CU05: Consultar Historial de Telemetria
+
+Actor: operador de ASADA o administrador tecnico.
+
+ThingsBoard almacena los datos publicados por MQTT y permite consultar series historicas para identificar patrones, eventos o anomalias.
+
+## Concepto de Operaciones
+
+### Operacion Normal
+
+1. La Tarea A selecciona cada canal del MUX, lee el ADC, promedia muestras y convierte a unidades fisicas.
+2. La Tarea A deposita la estructura `TelemetriaData` en Cola 1.
+3. La Tarea C consume Cola 1 y publica el JSON en ThingsBoard.
+4. El dashboard muestra telemetria actual e historica.
+5. La Tarea E muestra estado de conectividad por LED.
+
+### Desconexion de Red
+
+1. Si Wi-Fi o MQTT caen, la Tarea C intenta reconectar cada 5 s.
+2. La Tarea A sigue sensando cada 1000 ms.
+3. La Tarea B sigue disponible para control local.
+4. Cola 1 conserva hasta 10 muestras; si se llena, se descarta la mas antigua para mantener el dato reciente.
+
+### Condicion de Alarma
+
+1. Si la turbidez supera `umbralTurbidez`, la Tarea A cierra automaticamente la valvula logica.
+2. Se enciende LED rojo, se apaga LED verde y suena el buzzer.
+3. Tarea C publica `actuador` en telemetria y `estadoValvula` como atributo.
+4. ThingsBoard puede mostrar la alarma y registrar el evento.
+
+## Dashboard ThingsBoard
+
+El dashboard recomendado debe incluir:
+
+- Tarjetas de valor actual para pH, turbidez y conductividad.
+- Graficas historicas para cada variable.
+- Indicador de estado de valvula usando `estadoValvula`.
+- Widget RPC para `activarValvula`.
+- Widget RPC para `desactivarValvula`.
+- Controles RPC para `setUmbralPhMin`, `setUmbralPhMax` y `setUmbralTurbidez`.
+- Panel de alarmas con reglas sobre pH, turbidez y conductividad.
+
+Reglas sugeridas:
+
+| Variable | Condicion sugerida | Accion |
+|----------|--------------------|--------|
+| pH | `< 6.5` o `> 8.5` | Alarma visual en dashboard. |
+| Turbidez | `> umbral configurado` | Alarma y posible cierre de valvula. |
+| Conductividad | Segun criterio de calibracion | Alarma informativa o preventiva. |
+
+## Estructura del Repositorio
+
+```text
+firmware/
+|-- platformio.ini
+|-- README.md
+|-- src/
+|   |-- main.cpp
+|   |-- config.h
+|   |-- tareas.h
+|   `-- tareas.cpp
+|-- include/
+|   `-- README
+|-- lib/
+|   `-- README
+`-- test/
+    `-- README
+```
+
+Archivos principales:
+
+- `src/main.cpp`: crea colas, mutexes y tareas FreeRTOS.
+- `src/config.h`: centraliza pines, credenciales, umbrales, periodos y estructuras de datos.
+- `src/tareas.h`: declara colas, mutexes, estado compartido y prototipos.
+- `src/tareas.cpp`: implementa sensado, actuacion, MQTT, watchdog y LED de estado.
+- `platformio.ini`: define placa, framework, puerto, velocidad y librerias.
+
+## Cambios Respecto a la Propuesta Inicial
+
+Durante la implementacion se ajustaron algunos puntos para que el sistema fuera demostrable y coherente con el hardware disponible:
+
+- Se uso un multiplexor analogico para leer tres senales con una sola entrada ADC1 (`GPIO35`) en lugar de conectar cada sensor a un ADC individual.
+- Los sensores fisicos se maquetaron con potenciometros, manteniendo emulacion analogica por hardware.
+- La conductividad se documento segun el firmware final como mS/cm y no como uS/cm.
+- El periodo de sensado final es 1000 ms, no 500 ms.
+- El actuador se implemento en el prototipo con LED verde, LED rojo y buzzer. La valvula solenoide queda representada logicamente por `estadoActuador`/`estadoValvula`.
+- El control automatico local cierra la valvula por turbidez. Los umbrales de pH se pueden modificar por RPC, pero no disparan cierre local en el firmware actual.
+- La respuesta RPC confirma recepcion del comando; la ejecucion fisica queda a cargo de la Tarea B mediante Cola 2.
+- No se incluyen archivos de imagen dentro del workspace actual, por lo que los diagramas se describen textualmente en este README.
+
+## Que se Aplico al Final
+
+Al final del proyecto quedo aplicado un sistema Edge-to-Cloud funcional con ESP32 y FreeRTOS. El nodo toma muestras analogicas reales desde el hardware, las procesa localmente, mantiene separadas las tareas criticas de las tareas de red, publica telemetria enriquecida a ThingsBoard y acepta control remoto mediante RPC.
+
+En terminos de firmware, quedaron implementadas las cinco tareas requeridas: sensado determinista, actuacion, comunicaciones, watchdog y LED de estado. Tambien quedaron implementadas las colas entre tareas, los mutexes para evitar condiciones de carrera, la reconexion Wi-Fi/MQTT no bloqueante, el payload JSON completo, la publicacion de atributos y el control remoto de la valvula logica.
+
+En terminos de prototipo fisico, se aplico una maqueta analogica con MUX y potenciometros para representar pH, turbidez y conductividad. Para la salida, se aplico una representacion segura del actuador mediante LEDs y buzzer, suficiente para demostrar el comportamiento de alarma, apertura/cierre logico y confirmacion hacia ThingsBoard.
 
 ## Referencias
 
-[1] B. Camarillo, "¿Cómo está la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," *La República*, 31 oct. 2024. [En línea]. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
+[1] B. Camarillo, "Como esta la calidad del agua en Costa Rica? Bacterias y contaminantes se encontraron en estas zonas," La Republica, 31 oct. 2024. Disponible en: https://www.larepublica.net/noticia/como-esta-la-calidad-del-agua-en-costa-rica-bacterias-y-contaminantes-se-encontraron-en-estas-zonas
 
-[2] Delfino.cr, "Agua tóxica," 9 jul. 2025. [En línea]. Disponible en: https://delfino.cr/2025/07/agua-toxica
+[2] Delfino.cr, "Agua toxica," 9 jul. 2025. Disponible en: https://delfino.cr/2025/07/agua-toxica
 
-[3] Semanario Universidad, "Emergencia ambiental: más de 69 fuentes de agua en Cartago estarían contaminadas," 15 oct. 2024. [En línea]. Disponible en: https://semanariouniversidad.com/opinion/emergencia-ambiental-mas-de-69-fuentes-de-agua-en-cartago-estarian-contaminadas/
+[3] Semanario Universidad, "Emergencia ambiental: mas de 69 fuentes de agua en Cartago estarian contaminadas," 15 oct. 2024. Disponible en: https://semanariouniversidad.com/opinion/emergencia-ambiental-mas-de-69-fuentes-de-agua-en-cartago-estarian-contaminadas/
 
-[4] Prensa Latina, "Autorizan en Costa Rica consumo de agua tras contaminación," 13 feb. 2024. [En línea]. Disponible en: https://www.prensa-latina.cu/2024/02/13/autorizan-en-costa-rica-consumo-de-agua-tras-contaminacion/
+[4] Prensa Latina, "Autorizan en Costa Rica consumo de agua tras contaminacion," 13 feb. 2024. Disponible en: https://www.prensa-latina.cu/2024/02/13/autorizan-en-costa-rica-consumo-de-agua-tras-contaminacion/
 
-[5] Ministerio de Salud de Costa Rica, "Autoridades comparten resultados del análisis en fuentes de agua en Zona de Cartago," 28 oct. 2024. [En línea]. Disponible en: https://www.ministeriodesalud.go.cr/index.php/prensa/61-noticias-2024/1980-autoridades-comparten-resultados-del-analisis-en-fuentes-de-agua-en-zona-de-cartago
+[5] Ministerio de Salud de Costa Rica, "Autoridades comparten resultados del analisis en fuentes de agua en Zona de Cartago," 28 oct. 2024. Disponible en: https://www.ministeriodesalud.go.cr/index.php/prensa/61-noticias-2024/1980-autoridades-comparten-resultados-del-analisis-en-fuentes-de-agua-en-zona-de-cartago
